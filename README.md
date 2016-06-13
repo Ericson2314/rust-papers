@@ -204,8 +204,8 @@ Fn:
     S;  # statics
     l*; # locals (just the location names, no types)
     K,  # user labels, K = { lₙ: ¬tₙ | n }
-      enter: ¬ ∧((s: tₛ)*, (a: tₐ)*,        (l: Uninit<_>)*, ret_slot: Uninit<_>),
-      exit:  ¬ ∧((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
+      enter: ¬((s: tₛ)*, (a: tₐ)*,        (l: Uninit<_>)*, ret_slot: Uninit<_>),
+      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
     ⊢ eᵢ: ¬tᵢ
   --------------------------------------------------------------------------------
   I; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₐ*) -> tᵣ
