@@ -109,7 +109,8 @@ Node,       e ::= 'Assign'(lv, o, k)
                |  'DropCopy'(lv, k)
                |  'If'(o, k, k)
                |  ... # et cetera
-CfgContext, K ::= (label : ¬(LValueContext))*
+NodeType,  ¬t ::= ¬(LValueContext)
+CfgContext, K ::= (Label : NodeType)*
 ```
 
 And now the judgments.
@@ -194,21 +195,27 @@ If:
 ```
 
 An finally, the big "let-rec" that ties the "knot" of continuations together into the CFG --- and a function.
-Note that in addition to the user-defined continuations, 'exit' and 'enter' are automatically part of the context.
-'enter' requires that all locals are uninitialized, and args match the type of the function.
-'exit' requires that all locals and args are uninitialized, but the "return slot" is initialized.
+Every node in the CFG is postulated (node `eᵢ`, with type `¬tᵢ`), and bound to a label (`k₀`).
 ```
 Fn:
+  k₀ = entry
+  t₀ = ¬((s: tₛ)*, (a: tₐ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
   ∀i
     I;  # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
-    K,  # user labels, K = { lₙ: ¬tₙ | n }
-      enter: ¬((s: tₛ)*, (a: tₐ)*,        (l: Uninit<_>)*, ret_slot: Uninit<_>),
+    K,  # user labels, K = { kₙ: ¬tₙ | n }
       exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
     ⊢ eᵢ: ¬tᵢ
-  --------------------------------------------------------------------------------
+  --------------------------------------------------------------------------
   I; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₐ*) -> tᵣ
+
+
+Note the two special labels, 'enter' and 'exit'.
+'enter' is defined like any other node, but must exist and match the function's signature.
+Specifically, it requires that all locals are uninitialized, and all parameters are initialized to match the type of the function.
+'exit' isn't defined at all, but bound in the CfgContext so nodes can choose to exit as a successor.
+It requires that all locals and args are uninitialized, but the "return slot" is initialized.
 ```
 
 Ok, make sense? I've of course left many parts of the existing MIR unaccounted for: compound lvalues, lifetimes, references, panicking, mutability, aliasing, and more.
