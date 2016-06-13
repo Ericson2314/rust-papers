@@ -122,7 +122,7 @@ Constants can become rvalues whenever, and the in-context and out-context are on
 Const:
   I  ⊢  c: t
   ----------------------------
-  I;  LV;  LV   ⊢  const(c): t
+  I;  LV;  LV  ⊢  const(c): t
 ```
 
 Consumption is move complex.
@@ -130,12 +130,12 @@ We need to uninitialize the lvalue iff the type is !Copy.
 ```
 MoveConsume:
   ---------------------------------------------------------------
-  I, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>   ⊢  consume(lv): t
+  I, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
 ```
 ```
 CopyConsume:
   ------------------------------------------------------
-  I, t: Copy;  LV, lv: t;  LV, lv: t   ⊢  consume(lv): t
+  I, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
 ```
 
 The actual threading of the state is in the rvalue intruducers.
@@ -168,9 +168,9 @@ Assignment is perhaps the most important operation:
 ```
 Assign:
   I; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  o: t
-  I; S;  K   ⊢  k: ¬(LV₁, lv: t)
+  I; S;  K  ⊢  k: ¬(LV₁, lv: t)
   ---------------------------------------------------------
-  I; S;  K   ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
+  I; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
 [Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
@@ -178,9 +178,9 @@ Note that the lvalue to be assigned must be uninitialized prior to assignment, a
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
 ```
 CopyDrop:
-  I, t: Copy; S;  K   ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
+  I, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
   -----------------------------------------------------
-  I, t: Copy; S;  K   ⊢  drop(lv, k): ¬(LV, lv: t)
+  I, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t)
 ```
 
 And here is `if`.
