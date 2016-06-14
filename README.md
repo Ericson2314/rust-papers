@@ -121,7 +121,7 @@ Constants can become rvalues whenever, and the in-context and out-context are on
 ```
 Const:
   I  ⊢  c: t
-  ----------------------------
+  ───────────────────────────
   I;  LV;  LV  ⊢  const(c): t
 ```
 
@@ -129,12 +129,12 @@ Consumption is move complex.
 We need to uninitialize the lvalue iff the type is !Copy.
 ```
 MoveConsume:
-  ---------------------------------------------------------------
+  ──────────────────────────────────────────────────────────────
   I, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
 ```
 ```
 CopyConsume:
-  ------------------------------------------------------
+  ─────────────────────────────────────────────────────
   I, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
 ```
 
@@ -143,14 +143,14 @@ Note that the order of the threading does not matter---our state transformations
 ```
 Use:
   I; LV₀; LV₁  ⊢  o: t
-  -------------------------
+  ─────────────────────────
   I; LV₀; LV₁  ⊢  use(o): t
 ```
 ```
 UnOp:
   I; LV₀; LV₁  ⊢  o: t
   u: fn(t) -> u        # primops need no context
-  ----------------------------
+  ────────────────────────────
   I; LV₀; LV₁  ⊢  use(u, o): u
 ```
 ```
@@ -158,7 +158,7 @@ BinOp:
   I; LV₀; LV₁  ⊢  oₗ: t
   I; LV₁; LV₂  ⊢  oᵣ: t
   b: fn(t, u) -> v      # primops need no context
-  ---------------------------------
+  ─────────────────────────────────
   I; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
 ```
 
@@ -169,7 +169,7 @@ Assignment is perhaps the most important operation:
 Assign:
   I; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  o: t
   I; S;  K  ⊢  k: ¬(LV₁, lv: t)
-  ---------------------------------------------------------
+  ─────────────────────────────────────────────────────────
   I; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
@@ -179,7 +179,7 @@ In this formulation, everything is explicit, so we also need to drop copy types 
 ```
 CopyDrop:
   I, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
-  -----------------------------------------------------
+  ────────────────────────────────────────────────────
   I, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t)
 ```
 
@@ -190,7 +190,7 @@ If:
   I; S, LV₀;  S, LV₁  ⊢  o: t
   I; S; K  ⊢  k₀: ¬(LV₁)
   I; S; K  ⊢  k₁: ¬(LV₁)
-  ---------------------------------
+  ─────────────────────────────────
   I; S; K  ⊢  if(o, k₀, k₁): ¬(LV₀)
 ```
 
@@ -207,7 +207,7 @@ Fn:
     K,  # user labels, K = { kₙ: ¬tₙ | n }
       exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
     ⊢ eᵢ: ¬tᵢ
-  --------------------------------------------------------------------------
+  ──────────────────────────────────────────────────────────────────────────
   I; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₐ*) -> tᵣ
 
 
@@ -234,6 +234,7 @@ One thing that I haven't explicitly mentioned yet is the subtyping relation over
 First, we have (contravariant) width subtyping:
 ```
 SubContWidth:
+  ─────────────────────
   ¬(LV) <: ¬(LV, lv: a)
 ```
 the intuition being that a continuation does not need to care about the current type of every lvalue.
@@ -241,7 +242,7 @@ Second we have (contravariant) depth-subtyping
 ```
 SubContDepth:
   b <: a
-  ----------------------------
+  ────────────────────────────
   ¬(LV, lv: a) <: ¬(LV, lv: b)
 ```
 the intuition being that a continuation can care only somewhat about an lvalue.
