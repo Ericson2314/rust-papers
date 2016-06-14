@@ -98,7 +98,7 @@ StaticContext, S  ::= (s: t)*
 For now, we only will worry about `Copy`, but more generally an *impl context* keeps track of traits and their implementations.
 ```
 Trait,       tr ::= # some globally-unique identifier
-ImplContext, I  ::= (t: i)*
+ImplContext, I  ::= (t: tr)*
 ```
 
 Nodes in the CFG we will think of as continuations: they do not return, and while they don't take any arguments, the types of locations can be enforced as a prerequisite to them being called.
@@ -194,7 +194,7 @@ If:
   I; S; K  ⊢  if(o, k₀, k₁): ¬(LV₀)
 ```
 
-An finally, the big "let-rec" that ties the "knot" of continuations together into the CFG --- and a function.
+And finally, the big "let-rec" that ties the "knot" of continuations together into the CFG --- and a function.
 Every node in the CFG is postulated (node `eᵢ`, with type `¬tᵢ`), and bound to a label (`k₀`).
 ```
 Fn:
