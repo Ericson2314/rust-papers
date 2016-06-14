@@ -209,14 +209,12 @@ Fn:
     ⊢ eᵢ: ¬tᵢ
   ──────────────────────────────────────────────────────────────────────────
   I; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₐ*) -> tᵣ
-
-
+```
 Note the two special labels, 'enter' and 'exit'.
 'enter' is defined like any other node, but must exist and match the function's signature.
 Specifically, it requires that all locals are uninitialized, and all parameters are initialized to match the type of the function.
 'exit' isn't defined at all, but bound in the CfgContext so nodes can choose to exit as a successor.
 It requires that all locals and args are uninitialized, but the "return slot" is initialized.
-```
 
 Ok, make sense? I've of course left many parts of the existing MIR unaccounted for: compound lvalues, lifetimes, references, panicking, mutability, aliasing, and more.
 Also, I only gave the introducers (I trust the MIRi devs to figure out the eliminators!).
