@@ -257,7 +257,7 @@ Switch:
   (∪ₙ tₙ) :> t
   ∀i
     I; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ)
-  -------------------------------------------
+  ───────────────────────────────────────────
   I; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t)
 ```
 [On the first line, that's a union not the letter 'U'.] The union isn't me introducing union types (whew!), but just saying that these tᵢ "cover" t.
