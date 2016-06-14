@@ -238,7 +238,7 @@ SubContWidth:
   ¬(LV) <: ¬(LV, lv: a)
 ```
 the intuition being that a continuation does not need to care about the current type of every lvalue.
-Second we have (contravariant) depth-subtyping
+Second, we have (contravariant) depth-subtyping
 ```
 SubContDepth:
   b <: a
