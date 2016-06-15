@@ -260,3 +260,74 @@ Switch:
 ```
 [On the first line, that's a union not the letter 'U'.] The union isn't me introducing union types (whew!), but just saying that these tᵢ "cover" t.
 The nodes branched from the switch each expect a different variant, and the switch dispatches to the one expecting the variant that's actually there.
+
+
+## Lifetimes
+
+Niko's recent blog posts cover this very well, so I will build on them.
+
+The "non-lexical" in "non-lexical lifetime" is valid, but leaves out the important detail that such lifetimes *are* lexical with respect to the MIR.
+Indeed that this is one of the main motivations for the MIR.
+Not only does this make lifetime inference as we currently do simpler, but it also means we can explicitly represent lifetime.
+As I mentioned above, in formalisms like this, I believe everything should be explicit, and so lifetimes will be too.
+
+Lifetimes will be abstract function-global labels, just as lvalues have been defined as abstract function-global labels.
+Furthermore, just as lvalues can correspond to local variables or parameters, so lifetimes can exist internal to the function body or be parameters.
+Finally, there is one static lifetime, but many static lvalues (less symmetry, oh well).
+```
+Lifetime, 'l ::= 'static
+              |  'local0 | 'local1 | ...
+              |  'param0 | 'param1 | ...
+```
+
+As a first approximation, continuation types will be extended to include the set of liftimes the node inhabits, hereafter called the "active lifetimes".
+```
+LifetimeContext, LC ::= Lifetime*
+NodeType,        ¬t ::= ¬(LValueContext; LifetimeContext)
+```
+As lvalues contexts must be proper maps, so lifetime contexts must be proper sets when invoking any judgment.
+
+All node introducers so far will be modified to simply propagate the lifetime context: whatever lifetimes include a node's successors will also include the node itself.
+Similarly, there is no continuation subtyping related to "active liftimes", they must match exactly.
+Now, everything so far alone does renders lifetimes worthless, because all nodes would inhabit the same lifetimes!
+To remedy this, we'll have dedicated nodes to begin and end lifetimes: their single successor will have one more or less active lifetime than they do.
+For now, lets define them as:
+```
+LifetimeBegin:
+  I; S; K  ⊢  k: ¬(LV; LC, 'l)
+  ───────────────────────────────────
+  I; S; K  ⊢  begin('l, k): ¬(LV; LC)
+```
+```
+LifetimeEnd:
+  'l ∉ LV
+  I; S; K  ⊢  k: ¬(LV; LC)
+  ─────────────────────────────────────
+  I; S; K  ⊢  end('l, k): ¬(LV; LC, 'l)
+```
+The additional postulate, that 'l is not in any (current) type of any location, ensures that values do not outlive their lifetime. Because we do not support controvariant lifetimes, this is sufficient.
+
+I should remark on the design principles that led me to this formalism.
+Niko's [third blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/09/non-lexical-lifetimes-adding-the-outlives-relation/) goes over the limitations of single-entry-multiple-exit lifetimes defined with dominators, and the series instead opts to define lifetimes as subsets of CFG nodes which satisfy some conditions.
+He also pointed out that lifetimes could be thought of as "sets of paths" through a graph.
+I like the imagining lifetimes as "sets of paths", and that leads me to believe we should focus on the path's endpoints more than their interiors.
+A set of nodes, however, focuses on active lifetimes and leaves the lifetime boundary implicit, but having explicit start/end nodes does the opposite.
+Also, while one could make variants of nodes that introduce lifetimes so we need not introduce extra "no-op" begin/end nodes, that would lead to either explosion of rules, or more complicated rules.
+
+Niko's [second blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/04/non-lexical-lifetimes-based-on-liveness/) on non-lexical lifetimes proposes that instead of requiring the types of binding to outlive the *scope* of the binding, we should merely require that it outlive the *live-range* of the binding.
+In my formulation, that is a particularly natural strategy.
+Consider that only during the lifetime in which a variable is live will its lvalue be given that type.
+Its last use is in fact its destruction, after which the lvalue's type is `Uninit<_>`.
+To me, this signifies that the "moral equivalent" of a scope for this IR is in fact exactly this "live-range" lifetime.
+While it is possible to derive lifetimes in the core language based on the scopes in the surface language, they are fairly meaningless.
+
+Niko's third blog post also goes over the need for an "outlives-at" relation.
+The basic idea is that we often (always?) only care which lifetime ends later, and don't care which began earlier.
+More on that for a bit, but note now that this is justification for introducing references with an already active lifetime.
+Obviously the newly-introduced reference didn't exists from the beginning of the lifetime, but as long as it is destroyed before the lifetime ends, the lifetime *outlives* the reference *at* the moment of introduction.
+Because lifetimes are based on scopes today, we are already allow the bounding lifetime of a reference to extend past the reference's last use, and thus can be confident that a dedicated sort of node just to end lifetimes is sufficiently expressive.
+If allowing the creation of references in already active lifetimes is indeed sound, then a dedicated sort of node to begin lifetimes works too.
+
+### Outliving
+
+[To be written]
