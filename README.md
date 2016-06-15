@@ -176,10 +176,10 @@ The out contexts of their operand(s) instead constrain their successor(s).
 Assignment is perhaps the most important operation:
 ```
 Assign:
-  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  o: t
+  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: t
   TC; S;  K  ⊢  k: ¬(LV₁, lv: t)
-  ─────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
+  ───────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, rv, k): ¬(LV₀, lv: Uninit<_>)
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
 [Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
