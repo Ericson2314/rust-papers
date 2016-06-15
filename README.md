@@ -92,8 +92,7 @@ RValue,   rv ::= 'use'(Operand)
 ```
 
 An *lvalue context* represents the contents of each lvalue *at a node in the CFG*.
-A well-formed lvalue context must assign a type to a lvalue only once---it is conceptually a map.
-An unmentioned lvalue can have any type (with the right size) whatsoever.
+A well-formed lvalue context must assign a type to each lvalue exactly once---it is conceptually a function or total map from lvalues to types.
 A *static context* is just an lvalue context restricted to statics.
 ```
 LValueContext, LV ::= (LValue: Type)*
@@ -210,15 +209,15 @@ Every node in the CFG is postulated (node `eᵢ`, with type `¬tᵢ`), and bound
 Fn:
   k₀ = entry
   t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
-  ∀i
+  ∀i.
     TC; # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
     K,  # user labels, K = { kₙ: ¬tₙ | n }
       exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
     ⊢ eᵢ: ¬tᵢ
-  ───────────────────────────────────────────────────────────────────────────
-  TC; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₚ*) -> tᵣ
+  ─────────────────────────────────────────────────────────────────────────────
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₚ*) -> tᵣ
 ```
 Note the two special labels, 'enter' and 'exit'.
 'enter' is defined like any other node, but must exist and match the function's signature.
@@ -239,16 +238,11 @@ I have proposed splitting `Copy` like this in the past, but will not mention it 
 ## Enum Switch
 
 One thing that I haven't explicitly mentioned yet is the subtyping relation over continuation types.
-First, we have (contravariant) width subtyping:
+There is no width subtyping because the lvalue must assign a type to all lvalues.
+Otherwise, values could be forgotten without being dropped.
+There is (contravariant) depth-subtyping, however:
 ```
-SubContWidth:
-  ─────────────────────
-  ¬(LV) <: ¬(LV, lv: a)
-```
-the intuition being that a continuation does not need to care about the current type of every lvalue.
-Second, we have (contravariant) depth-subtyping
-```
-SubContDepth:
+SubCont:
   b <: a
   ────────────────────────────
   ¬(LV, lv: a) <: ¬(LV, lv: b)
