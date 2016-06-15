@@ -68,15 +68,20 @@ lvalues are global or whole-function scoped:
 ```
 Static, s  ::= 'static0' | 'static1' | ...
 Local,  l  ::= 'local0'  | 'local1'  | ...
-Param,  a  ::= 'param0'  | 'param1'  | ...
+Param,  p  ::= 'param0'  | 'param1'  | ...
 LValue, lv ::= 'ret_slot' | Static | Local | Param
 ```
 
-Types, constants, and rvalues are largely "what one would expect", with a (sized-indexed) uninitialized type, and uninitialized constant inhabiting it:
+Types, constants, and rvalues are largely "what one would expect", with a (size-indexed) uninitialized type, and an inscrutable uninitialized constant inhabiting it:
 ```
-Size,     n  ::= '0b' | '1b' | '2b' | ...
-Type,     t  ::= 'Uninit'<Size> | ...
-Constant, c  ::= 'uninit'(Size) | ...
+Size,        n  ::= '0b' | '1b' | '2b' | ...
+TypeBuiltin     ::= 'Uninit'<Size> | ...
+TypeParam       ::= 'TParam0' | 'TParam1' | ...
+TypeUserDef     ::= 'User0'   | 'User1'   | ...
+Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
+```
+```
+Constant, c  ::= 'uninit'::<Size> | ...
 Operand,  o  ::= 'const'(Constant)
               |  'consume'(LValue)
 Unop,     u  ::= ...
@@ -91,23 +96,28 @@ A well-formed lvalue context must assign a type to a lvalue only once---it is co
 An unmentioned lvalue can have any type (with the right size) whatsoever.
 A *static context* is just an lvalue context restricted to statics.
 ```
-LValueContext, LV ::= (lv: t)*
-StaticContext, S  ::= (s: t)*
+LValueContext, LV ::= (LValue: Type)*
+StaticContext, S  ::= (Static: Type)*
 ```
 
-For now, we only will worry about `Copy`, but more generally an *impl context* keeps track of traits and their implementations.
+For now, we only will worry about `Copy` implementations, but more generally an *type context* keeps track of user defined types, type parameters, traits bounds.
+A trait bound can only involve user-defined types, in which case it represents an impl, or it can involve type parameters, in which case it represents a postulate from a where clause.
+[N.B. this roughly corresponds to rustc's `ParameterEnvironment`.]
 ```
 Trait,       tr ::= # some globally-unique identifier
-ImplContext, I  ::= (t: tr)*
+TraitBound      ::= Type ':' Trait
+TypePremise     ::= TraitBound | TypeParam | TypeUserDef
+TypeContext, TC ::= TypePremise*
 ```
+As a basic scoping rule, a parameter should come before any bound that uses it in a type context.
 
 Nodes in the CFG we will think of as continuations: they do not return, and while they don't take any arguments, the types of locations can be enforced as a prerequisite to them being called.
 ```
 Label,      k ::= 'enter' | 'exit'
                |  'k0' | 'k1' | ...
-Node,       e ::= 'Assign'(lv, o, k)
-               |  'DropCopy'(lv, k)
-               |  'If'(o, k, k)
+Node,       e ::= 'Assign'(LValue, Operand, Label)
+               |  'DropCopy'(LValue, Label)
+               |  'If'(Operand, Label, Label)
                |  ... # et cetera
 NodeType,  ¬t ::= ¬(LValueContext)
 CfgContext, K ::= (Label : NodeType)*
@@ -120,46 +130,46 @@ This pattern allows us to thread some state.
 Constants can become rvalues whenever, and the in-context and out-context are only constrained to be equal.
 ```
 Const:
-  I  ⊢  c: t
-  ───────────────────────────
-  I;  LV;  LV  ⊢  const(c): t
+  TC  ⊢  c: t
+  ────────────────────────────
+  TC;  LV;  LV  ⊢  const(c): t
 ```
 
 Consumption is move complex.
 We need to uninitialize the lvalue iff the type is !Copy.
 ```
 MoveConsume:
-  ──────────────────────────────────────────────────────────────
-  I, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
+  ───────────────────────────────────────────────────────────────
+  TC, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
 ```
 ```
 CopyConsume:
-  ─────────────────────────────────────────────────────
-  I, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
+  ──────────────────────────────────────────────────────
+  TC, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
 ```
 
 The actual threading of the state is in the rvalue intruducers.
 Note that the order of the threading does not matter---our state transformations are communicative.
 ```
 Use:
-  I; LV₀; LV₁  ⊢  o: t
-  ─────────────────────────
-  I; LV₀; LV₁  ⊢  use(o): t
+  TC; LV₀; LV₁  ⊢  o: t
+  ──────────────────────────
+  TC; LV₀; LV₁  ⊢  use(o): t
 ```
 ```
 UnOp:
-  I; LV₀; LV₁  ⊢  o: t
+  TC; LV₀; LV₁  ⊢  o: t
   u: fn(t) -> u        # primops need no context
-  ────────────────────────────
-  I; LV₀; LV₁  ⊢  use(u, o): u
+  ─────────────────────────────
+  TC; LV₀; LV₁  ⊢  use(u, o): u
 ```
 ```
 BinOp:
-  I; LV₀; LV₁  ⊢  oₗ: t
-  I; LV₁; LV₂  ⊢  oᵣ: t
+  TC; LV₀; LV₁  ⊢  oₗ: t
+  TC; LV₁; LV₂  ⊢  oᵣ: t
   b: fn(t, u) -> v      # primops need no context
-  ─────────────────────────────────
-  I; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
+  ──────────────────────────────────
+  TC; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
 ```
 
 Nodes do not have two lvalue contexts, because viewed as continuations they don't return.
@@ -167,10 +177,10 @@ The out contexts of their operand(s) instead constrain their successor(s).
 Assignment is perhaps the most important operation:
 ```
 Assign:
-  I; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  o: t
-  I; S;  K  ⊢  k: ¬(LV₁, lv: t)
+  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  o: t
+  TC; S;  K  ⊢  k: ¬(LV₁, lv: t)
   ─────────────────────────────────────────────────────────
-  I; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
+  TC; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>)
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
 [Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
@@ -178,20 +188,20 @@ Note that the lvalue to be assigned must be uninitialized prior to assignment, a
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
 ```
 CopyDrop:
-  I, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
-  ────────────────────────────────────────────────────
-  I, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t)
+  TC, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
+  ─────────────────────────────────────────────────────
+  TC, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t)
 ```
 
 And here is `if`.
 I could go on, but hopefully the basic pattern is clear.
 ```
 If:
-  I; S, LV₀;  S, LV₁  ⊢  o: t
-  I; S; K  ⊢  k₀: ¬(LV₁)
-  I; S; K  ⊢  k₁: ¬(LV₁)
-  ─────────────────────────────────
-  I; S; K  ⊢  if(o, k₀, k₁): ¬(LV₀)
+  TC; S, LV₀;  S, LV₁  ⊢  o: t
+  TC; S; K  ⊢  k₀: ¬(LV₁)
+  TC; S; K  ⊢  k₁: ¬(LV₁)
+  ──────────────────────────────────
+  TC; S; K  ⊢  if(o, k₀, k₁): ¬(LV₀)
 ```
 
 And finally, the big "let-rec" that ties the "knot" of continuations together into the CFG --- and a function.
@@ -199,16 +209,16 @@ Every node in the CFG is postulated (node `eᵢ`, with type `¬tᵢ`), and bound
 ```
 Fn:
   k₀ = entry
-  t₀ = ¬((s: tₛ)*, (a: tₐ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
+  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
   ∀i
-    I;  # trait impls
+    TC; # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
     K,  # user labels, K = { kₙ: ¬tₙ | n }
       exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
     ⊢ eᵢ: ¬tᵢ
-  ──────────────────────────────────────────────────────────────────────────
-  I; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₐ*) -> tᵣ
+  ───────────────────────────────────────────────────────────────────────────
+  TC; S  ⊢  Mir { args, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₚ*) -> tᵣ
 ```
 Note the two special labels, 'enter' and 'exit'.
 'enter' is defined like any other node, but must exist and match the function's signature.
@@ -254,9 +264,9 @@ Enum switch becomes:
 Switch:
   (∪ₙ tₙ) :> t
   ∀i
-    I; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ)
-  ───────────────────────────────────────────
-  I; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t)
+    TC; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ)
+  ────────────────────────────────────────────
+  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t)
 ```
 [On the first line, that's a union not the letter 'U'.] The union isn't me introducing union types (whew!), but just saying that these tᵢ "cover" t.
 The nodes branched from the switch each expect a different variant, and the switch dispatches to the one expecting the variant that's actually there.
@@ -275,9 +285,15 @@ Lifetimes will be abstract function-global labels, just as lvalues have been def
 Furthermore, just as lvalues can correspond to local variables or parameters, so lifetimes can exist internal to the function body or be parameters.
 Finally, there is one static lifetime, but many static lvalues (less symmetry, oh well).
 ```
-Lifetime, 'l ::= 'static
-              |  'local0 | 'local1 | ...
-              |  'param0 | 'param1 | ...
+LifetimeLocal, 'l ::= '\'local0' | '\'local1' | ...
+LifetimeParam, 'p ::= '\'param0' | '\'param1' | ...
+Lifetime,      'a ::= '\'static' | LifetimeLocal | LifetimeParam
+```
+
+Type contexts should be extended to also contain lifetime parameters:
+```
+TypePremise     ::= TraitBound
+                 |  TypeParam | LifetimeParam
 ```
 
 As a first approximation, continuation types will be extended to include the set of liftimes the node inhabits, hereafter called the "active lifetimes".
@@ -294,16 +310,16 @@ To remedy this, we'll have dedicated nodes to begin and end lifetimes: their sin
 For now, lets define them as:
 ```
 LifetimeBegin:
-  I; S; K  ⊢  k: ¬(LV; LC, 'l)
-  ───────────────────────────────────
-  I; S; K  ⊢  begin('l, k): ¬(LV; LC)
+  TC; S; K  ⊢  k: ¬(LV; LC, 'l)
+  ────────────────────────────────────
+  TC; S; K  ⊢  begin('l, k): ¬(LV; LC)
 ```
 ```
 LifetimeEnd:
   'l ∉ LV
-  I; S; K  ⊢  k: ¬(LV; LC)
-  ─────────────────────────────────────
-  I; S; K  ⊢  end('l, k): ¬(LV; LC, 'l)
+  TC; S; K  ⊢  k: ¬(LV; LC)
+  ──────────────────────────────────────
+  TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l)
 ```
 The additional postulate, that 'l is not in any (current) type of any location, ensures that values do not outlive their lifetime. Because we do not support controvariant lifetimes, this is sufficient.
 
