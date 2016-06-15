@@ -331,3 +331,7 @@ If allowing the creation of references in already active lifetimes is indeed sou
 ### Outliving
 
 [To be written]
+
+## Unique References (Generalizing `&mut`)
+
+[To be written]
