@@ -455,7 +455,7 @@ In Rust, it looks like:
       map1.insert(...);
   }
   use(v0);
-  ```
+> ```
 
 As our CFG it looks like:
 
