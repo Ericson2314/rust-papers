@@ -72,14 +72,17 @@ Param,  p  ::= 'param0'  | 'param1'  | ...
 LValue, lv ::= 'ret_slot' | Static | Local | Param
 ```
 
-Types, constants, and rvalues are largely "what one would expect", with a (size-indexed) uninitialized type, and an inscrutable uninitialized constant inhabiting it:
+Types, constants, and rvalues are largely "what one would expect".
+Additionally, there is a (size-indexed) uninitialized type and an inscrutable constant inhabiting it, and an absurd type, with no inhabitants:
 ```
 Size,        n  ::= '0b' | '1b' | '2b' | ...
-TypeBuiltin     ::= 'Uninit'<Size> | ...
+TypeBuiltin     ::= 'Uninit'<Size> | ! | ...
 TypeParam       ::= 'TParam0' | 'TParam1' | ...
 TypeUserDef     ::= 'User0'   | 'User1'   | ...
 Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
 ```
+The absurd type is so absurd it can be all sizes for all lvalues (thanks @RalfJung!); there is no need to give it a size index.
+
 ```
 Constant, c  ::= 'uninit'::<Size> | ...
 Operand,  o  ::= 'const'(Constant)
@@ -117,6 +120,8 @@ Label,      k ::= 'enter' | 'exit'
 Node,       e ::= 'Assign'(LValue, Operand, Label)
                |  'DropCopy'(LValue, Label)
                |  'If'(Operand, Label, Label)
+               |  'Call'(Operand, Label)
+               |  'DeadCode'
                |  ... # et cetera
 NodeType,  ¬t ::= ¬(LValueContext)
 CfgContext, K ::= (Label : NodeType)*
@@ -183,6 +188,29 @@ Assign:
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
 [Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
+
+Call resembles `Unop` and `Binop`, since its the moral equivalent for calling user-defined instead of primitive functions.
+While it's not too interesting now, it will become more interesting later.
+```
+Call:
+  t₀ = fn(t₁..tₙ) -> tᵣ
+  ∀i.
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ
+  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ)
+  ───────────────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
+```
+
+We can define diverging functions simply by never calling 'exit' and creating a cylic in the CFG instead.
+But when calling a non-terminating function, we still need to provide a successor.
+This unreachable node can be used whenever there exists an lvalue with type `!`
+Since that is the return type of a diverging function, after we return we will have an lvalue with that type (the return slot), and thus we can use this as a successor.
+This is also useful for unreachable branch in an enum match (corresponding to an absurd variant).
+```
+DeadCode:
+  ───────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: !)
+```
 
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
 ```
