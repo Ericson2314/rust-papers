@@ -163,7 +163,7 @@ Use:
 ```
 UnOp:
   TC; LV₀; LV₁  ⊢  o: t
-  u: fn(t) -> u        # primops need no context
+  u: fn(t) -> u         # primops need no context
   ─────────────────────────────
   TC; LV₀; LV₁  ⊢  use(u, o): u
 ```
@@ -171,7 +171,7 @@ UnOp:
 BinOp:
   TC; LV₀; LV₁  ⊢  oₗ: t
   TC; LV₁; LV₂  ⊢  oᵣ: t
-  b: fn(t, u) -> v      # primops need no context
+  b: fn(t, u) -> v       # primops need no context
   ──────────────────────────────────
   TC; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
 ```
@@ -270,7 +270,7 @@ There is no width subtyping because the lvalue must assign a type to all lvalues
 Otherwise, values could be forgotten without being dropped.
 There is (contravariant) depth-subtyping, however:
 ```
-SubCont:
+SubContLValue:
   b <: a
   ────────────────────────────
   ¬(LV, lv: a) <: ¬(LV, lv: b)
