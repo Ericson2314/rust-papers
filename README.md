@@ -312,12 +312,6 @@ LifetimeParam, 'p ::= '\'param0' | '\'param1' | ...
 Lifetime,      'a ::= '\'static' | LifetimeLocal | LifetimeParam
 ```
 
-Type contexts should be extended to also contain lifetime parameters:
-```
-TypePremise     ::= TraitBound
-                 |  TypeParam | LifetimeParam
-```
-
 As a first approximation, continuation types will be extended to include the set of liftimes the node inhabits, hereafter called the "active lifetimes".
 ```
 LifetimeContext, LC ::= Lifetime*
@@ -343,7 +337,9 @@ LifetimeEnd:
   ──────────────────────────────────────
   TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l)
 ```
-The additional postulate, that 'l is not in any (current) type of any location, ensures that values do not outlive their lifetime. Because we do not support controvariant lifetimes, this is sufficient.
+The additional postulate, that `'l` is not in any (current) type of any location, should ensure that values do not outlive their lifetime.
+It would be nicer to use a "strict-outlives" relation, but we don't have that.
+Because we do not support controvariant lifetimes, this is sufficient.
 
 I should remark on the design principles that led me to this formalism.
 Niko's [third blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/09/non-lexical-lifetimes-adding-the-outlives-relation/) goes over the limitations of single-entry-multiple-exit lifetimes defined with dominators, and the series instead opts to define lifetimes as subsets of CFG nodes which satisfy some conditions.
@@ -368,7 +364,138 @@ If allowing the creation of references in already active lifetimes is indeed sou
 
 ### Outliving
 
-[To be written]
+Now, let us talk about the outlives relationship in detail.
+I tried to think to think of a situation where the new "outlives-at" relation wouldn't suffice, and the old "outlives" relation was needed, but I failed.
+The rules I came up with, keep the "at" implicit however, so our `x: y` syntax will remain the same.
+
+As before, a lifetime can bound another lifetime or a type.
+Lifetime bounds are bundled in an bound context (running out of names, I am).
+```
+LifetimeBound, lb ::= Lifetime ':' Lifetime
+                   |  Type     ':' Lifetime
+BoundContext,  BC ::= LifetimeBound*
+```
+
+Recall the outlives relation defined in [RFC 1214](https://github.com/rust-lang/rfcs/blob/master/text/1214-projections-lifetimes-and-wf.md).
+It didn't concern the terms/the CFG, but simply the derivation of outlive bounds from other outlive bounds.
+We will use it here (with the slight exception of a different rule for unique references as those will be defined differently).
+Where the judgements refer "the environment", we will make that precise by using the bound context.
+Thus, prepend all judgements with `BC; ` in the original rules, like
+```
+BC; R ⊢ 'foo: 'bar
+```
+The logic of keeping this largely at is that, working with outlives-at judgements that all share the same "at", one can ignore the position altogether.
+If that is not the case, RF 1214's outlives will need to be further modified.
+
+Unfortunately, we must modify continuation types again, giving them---you guessed it---a bound context.
+Again, all existing rules will blindly propagate the bound context to their successors.
+But, this time there is a subtyping rule:
+```
+SubContOblig:
+  ∀lb ∈ OB₁.  OB0; <>  ⊢ lb
+  ──────────────────────────────
+  ¬(LV; LC; OB₁) <: ¬(LV; LC; OB₀)
+```
+Note the the 0 and 1 subscripts are reversed from what one might expect.
+Instead of imaging the bounds as *proofs our continuations require*, imagine them as
+*obligations our continuations discharge*.
+So, given what (all) successors are obligated to carry out, one can deduce bounds using RFC 1412's outlives, and give those new bounds as obligations the current node can carry out.
+
+Why all this?
+Consider that there is no evidence in the "past" or "present" with which to prove the outlives-at relation.
+The best one can do is charge all successor to witness `'b` dying no later than `'a` for `'a: 'b`.
+Consider also that if we had stayed with the original outlives relation, each node would both obligate its predecessors and require a proof from its predecessors.
+
+Hopefully it is clear now that we will need to modify `LifetimeEnd`:
+```
+LifetimeEnd:
+  'l ∉ LV
+  TC; S; K  ⊢  k: ¬(LV; LC; BC)
+  ───────────────────────────────────────────────────────────────
+  TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l; BC, {'l: 'a | 'a ∈ LC })
+```
+The set-builder notation says we discharge obligations for each lifetime in `LC`.
+(Of course, due the the subtyping rule, it's fine if the predecessor doesn't care about every lifetime in `LC` being outlived.)
+
+I should note that the outlives-at relation defined this way has some perhaps surprising consequences.
+Consider a CFG of a single loop with two lifetimes twice overlapping.
+Cut and unrolled, the loop looks like:
+```
+   'a ┌─────────────────────┐
+┅━━━━━┷━━━━┯═══════════╤════╧━━━━━┅
+┄──────────┘        'b └──────────┄
+
+  → CFG edge direction (time)
+  ━ 'a: 'b
+  ═ 'b: 'a
+```
+the imaginary cut is at the dotted lines, and the brackets labeled `'a` and `'b` denote each lifetime.
+Moving from left to right, after `'b` ends and until 'a ends, `'a` can derive that `'b: 'a`, because `'b` is alive at `'a`'s ending.
+But the other have of the CFG loop, the opposite can be derived!
+This shows that no precaution is taken against a lifetimes re-resurrecting after they were presumed dead.
+This might seem highly dangerous, but note that when a lifetime dies, nothing associated with it can still exist because no lvalue can include it in its type.
+Thus, no pointer invalidation can occur.
+
+To end the section, I want to close with Niko's most unruly example from the third blog.
+In Rust, it looks like:
+
+> ```rust
+  let mut map1 = HashMap::new();
+  let mut map2 = HashMap::new();
+  let key = ...;
+  let map_ref1 = &mut map1;
+  let v1 = map_ref1.get_mut(&key);
+  let v0;
+  if some_condition {
+      v0 = v1.unwrap();
+  } else {
+      let map_ref2 = &mut map2;
+      let v2 = map_ref2.get_mut(&key);
+      v0 = v2.unwrap();
+      map1.insert(...);
+  }
+  use(v0);
+  ```
+
+As our CFG it looks like:
+
+```
+            A [ map1 = HashMap::new()       ]
+            1 [ map2 = HashMap::new()       ]
+            2 [ key: K = ...                ]
+            3 [ begin('x)                   ]
+            3 [ map_ref1 = &mut map1        ]
+            4 [ v1 = map_ref1.get_mut(&key) ]
+            5 [ if some_condition           ]
+                      |               |
+                     true           false
+                      |               |
+                      v               v
+  B [ v0 = v1.unwrap() ]   C [ destroy(v0)                 ]
+  1 [ goto             ]   1 [ end('x)                     ]
+                      |    2 [ begin('x)                   ]
+                      |    3 [ map_ref2 = &mut map2        ]
+                      |    4 [ v2 = map_ref2.get_mut(&key) ]
+                      |    5 [ begin('x)                   ]
+                      |    6 [ v0 = v2.unwrap()            ]
+                      |    7 [ map1.insert(...)            ]
+                      |    8 [ goto                        ]
+                      |               |
+                      v               v
+                    D [ use(v0)       ]
+                    1 [ end('x)       ]
+```
+
+We can type this with a single lifetime!
+Start before A3, to include v1.
+V0's ref is given the same lifetime on both branches.
+On the right branch, end and begin again before C3, as the next section will demostrate, this "clears" the borrow on map1.
+Finally, begin again before assigning `v0` so that it can be given the lifetime as prescribed above.
+Note that B1 and C8 have different sets of lvalues borrowed before the merge at D0.
+That's fine.
+One imagine borrowing and then immediately throwing away the reference, but the location must stayed borrowed until the lifetime the referenced was associated with ends.
+Thus one can coerce lvalues to their borrowed equivalents.
+
 
 ## Unique References (Generalizing `&mut`)
 
