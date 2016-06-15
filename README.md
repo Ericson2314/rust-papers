@@ -77,7 +77,7 @@ Additionally, there is a (size-indexed) uninitialized type and an inscrutable co
 ```
 Size,        n  ::= '0b' | '1b' | '2b' | ...
 TypeBuiltin     ::= 'Uninit'<Size> | ! | ...
-TypeParam       ::= 'TParam0' | 'TParam1' | ...
+TypeParam,   tp ::= 'TParam0' | 'TParam1' | ...
 TypeUserDef     ::= 'User0'   | 'User1'   | ...
 Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
 ```
@@ -106,10 +106,10 @@ For now, we only will worry about `Copy` implementations, but more generally an 
 A trait bound can only involve user-defined types, in which case it represents an impl, or it can involve type parameters, in which case it represents a postulate from a where clause.
 [N.B. this roughly corresponds to rustc's `ParameterEnvironment`.]
 ```
-Trait,       tr ::= # some globally-unique identifier
-TraitBound      ::= Type ':' Trait
-TypePremise     ::= TraitBound | TypeParam | TypeUserDef
-TypeContext, TC ::= TypePremise*
+Trait,       tr  ::= # some globally-unique identifier
+TraitBound,  trb ::= Type ':' Trait
+TypePremise      ::= TraitBound | TypeParam | TypeUserDef
+TypeContext, TC  ::= TypePremise*
 ```
 As a basic scoping rule, a parameter should come before any bound that uses it in a type context.
 
@@ -190,15 +190,16 @@ Note that the lvalue to be assigned must be uninitialized prior to assignment, a
 [Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
 
 Call resembles `Unop` and `Binop`, since its the moral equivalent for calling user-defined instead of primitive functions.
+Functions do have type parameters, so we must substitute type args for type parameters.
 While it's not too interesting now, it will become more interesting later.
 ```
 Call:
-  t₀ = fn(t₁..tₙ) -> tᵣ
+  t₀ = for<tp*> fn(t₁..tₙ) -> tᵣ where trb*
   ∀i.
-    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ
-  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ)
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]*
+  TC, trb*; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ)
   ───────────────────────────────────────────────────────
-  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
+  TC, trb*; S;  K  ⊢  call<tₜₐ*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
 ```
 
 We can define diverging functions simply by never calling 'exit' and creating a cylic in the CFG instead.
@@ -252,6 +253,14 @@ Note the two special labels, 'enter' and 'exit'.
 Specifically, it requires that all locals are uninitialized, and all parameters are initialized to match the type of the function.
 'exit' isn't defined at all, but bound in the CfgContext so nodes can choose to exit as a successor.
 It requires that all locals and args are uninitialized, but the "return slot" is initialized.
+
+For completeness, we can parameterize the MIR with type parameters and trait bounds like this:
+```
+FnGeneric:
+  TC, tp*, trb*; S  ⊢  f: fn(tₚ*) -> tᵣ
+  ───────────────────────────────────────────────────────────
+  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*> fn(tₚ*) -> tᵣ where trb*
+```
 
 Ok, make sense? I've of course left many parts of the existing MIR unaccounted for: compound lvalues, lifetimes, references, panicking, mutability, aliasing, and more.
 Also, I only gave the introducers (I trust the MIRi devs to figure out the eliminators!).
@@ -388,11 +397,14 @@ The logic of keeping this largely at is that, working with outlives-at judgement
 If that is not the case, RF 1214's outlives will need to be further modified.
 
 Unfortunately, we must modify continuation types again, giving them---you guessed it---a bound context.
+```
+NodeType, ¬t ::= ¬(LValueContext; LifetimeContext; BoundContext)
+```
 Again, all existing rules will blindly propagate the bound context to their successors.
 But, this time there is a subtyping rule:
 ```
 SubContOblig:
-  ∀lb ∈ OB₁.  OB0; <>  ⊢ lb
+  ∀lb ∈ OB₁.  OB₀; <>  ⊢ lb
   ──────────────────────────────
   ¬(LV; LC; OB₁) <: ¬(LV; LC; OB₀)
 ```
@@ -416,6 +428,51 @@ LifetimeEnd:
 ```
 The set-builder notation says we discharge obligations for each lifetime in `LC`.
 (Of course, due the the subtyping rule, it's fine if the predecessor doesn't care about every lifetime in `LC` being outlived.)
+
+We can now redefine `Call`, `Fn`, and `FnGeneric`.
+`Call` has three additionally jobs.
+First, it needs to provide lifetime arguments from the set of active lifetimes.
+Second, it needs to substitute those as well for lifetime parameters in the argument types.
+Third, it needs to propagate obligations to satisfy the lifetime bounds from the where clause.
+```
+Call:
+  TC ⊢ trb*
+  OB ⊢ lb*
+  t₀ = for<tp*, 'p*> fn(t₁..tₙ) -> tᵣ where trb*, lb*
+  ∀i.
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]* ['a/'p]*
+  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ; LC; OB)
+  ────────────────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  call<tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+```
+[I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate postulate just for legibility.]
+
+`Fn`, not `FnGeneric` is responsible for lifetime parameters and lifetime bounds.
+lifetime parameters, and `'static`, become active lifetimes for `enter` and `exit`.
+`exit` also satisfies obligations for all lifetime bounds, allowing the obligations to be back-propagated into the rest of the CFG.
+```
+Fn:
+  k₀ = entry
+  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'static, 'p*)
+  ∀i.
+    TC; # trait impls
+    S;  # statics
+    l*; # locals (just the location names, no types)
+    K,  # user labels, K = { kₙ: ¬tₙ | n }
+      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ; 'static, 'p*; BC);
+    ⊢ eᵢ: ¬tᵢ
+  ─────────────────────────────────────────────────────────────────────────────────────────
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }:
+            for<'p*> fn(tₚ*) -> tᵣ where BC
+```
+
+`FnGeneric` is basically the same but prepends type parameters to lifetime parameters and prepends trait bounds to lifetime bounds.
+```
+FnGeneric:
+  TC, tp*, trb*; S  ⊢  f: for<'p*> fn(tₚ*) -> tᵣ where BC
+  ────────────────────────────────────────────────────────────────────
+  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*, 'p*> fn(tₚ*) -> tᵣ where trb*, BC
+```
 
 I should note that the outlives-at relation defined this way has some perhaps surprising consequences.
 Consider a CFG of a single loop with two lifetimes twice overlapping.
@@ -500,3 +557,220 @@ Thus one can coerce lvalues to their borrowed equivalents.
 ## Unique References (Generalizing `&mut`)
 
 [To be written]
+
+
+## Appendix: Grammar and Rules in Full
+
+All the extension and modifications of each section, squashed together.
+
+### Grammar
+
+```
+anything* ::= | anything ',' anything*
+```
+```
+Static, s  ::= 'static0' | 'static1' | ...
+Local,  l  ::= 'local0'  | 'local1'  | ...
+Param,  p  ::= 'param0'  | 'param1'  | ...
+LValue, lv ::= 'ret_slot' | Static | Local | Param
+```
+```
+Size,        n  ::= '0b' | '1b' | '2b' | ...
+TypeBuiltin     ::= 'Uninit'<Size> | ...
+TypeParam,   tp ::= 'TParam0' | 'TParam1' | ...
+TypeUserDef     ::= 'User0'   | 'User1'   | ...
+Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
+```
+```
+LifetimeLocal, 'l ::= '\'local0' | '\'local1' | ...
+LifetimeParam, 'p ::= '\'param0' | '\'param1' | ...
+Lifetime,      'a ::= '\'static' | LifetimeLocal | LifetimeParam
+```
+```
+Constant, c  ::= 'uninit'::<Size> | ...
+Operand,  o  ::= 'const'(Constant)
+              |  'consume'(LValue)
+Unop,     u  ::= ...
+Binop,    b  ::= ...
+RValue,   rv ::= 'use'(Operand)
+              |  'unop'(Unop, Operand, Operand)
+              |  'binop'(Binop, Operand, Operand)
+```
+```
+LValueContext, LV ::= (LValue: Type)*
+StaticContext, S  ::= (Static: Type)*
+```
+```
+Trait,       tr  ::= # some globally-unique identifier
+TraitBound,  trb ::= Type ':' Trait
+TypePremise      ::= TraitBound | TypeParam | TypeUserDef
+TypeContext, TC  ::= TypePremise*
+```
+```
+LifetimeBound       ::= Lifetime ':' Lifetime
+                     |  Type     ':' Lifetime
+BoundContext,  BC ::= LifetimeBound*
+```
+```
+Label,           k  ::= 'enter' | 'exit'
+                     |  'k0' | 'k1' | ...
+Node,            e  ::= 'Assign'(LValue, Operand, Label)
+                     |  'DropCopy'(LValue, Label)
+                     |  'If'(Operand, Label, Label)
+                     |  ... # et cetera
+LifetimeContext, LC ::= Lifetime*
+NodeType,        ¬t ::= ¬(LValueContext; LifetimeContext; BoundContext)
+CfgContext,      K  ::= (Label : NodeType)*
+```
+
+### Rules
+
+#### Operand Introduction Rules
+```
+Const:
+  TC  ⊢  c: t
+  ────────────────────────────
+  TC;  LV;  LV  ⊢  const(c): t
+```
+```
+MoveConsume:
+  ───────────────────────────────────────────────────────────────
+  TC, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
+```
+```
+CopyConsume:
+  ──────────────────────────────────────────────────────
+  TC, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
+```
+
+#### RValue Introduction Rules
+```
+Use:
+  TC; LV₀; LV₁  ⊢  o: t
+  ──────────────────────────
+  TC; LV₀; LV₁  ⊢  use(o): t
+```
+```
+UnOp:
+  TC; LV₀; LV₁  ⊢  o: t
+  u: fn(t) -> u        # primops need no context
+  ─────────────────────────────
+  TC; LV₀; LV₁  ⊢  use(u, o): u
+```
+```
+BinOp:
+  TC; LV₀; LV₁  ⊢  oₗ: t
+  TC; LV₁; LV₂  ⊢  oᵣ: t
+  b: fn(t, u) -> v      # primops need no context
+  ──────────────────────────────────
+  TC; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
+```
+
+#### Node/Continuation Introduction Rules
+```
+Assign:
+  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: t
+  TC; S;  K  ⊢  k: ¬(LV₁, rv: t; LC; BC)
+  ─────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>; LC; BC)
+```
+```
+Call:
+  TC ⊢ trb*
+  OB ⊢ lb*
+  t₀ = for<tp*, 'p*> fn(t₁..tₙ) -> tᵣ where trb*, lb*
+  ∀i.
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]* ['a/'p]*
+  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ; LC; OB)
+  ────────────────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  call<tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+```
+```
+DeadCode:
+  ───────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: !; LC; BC)
+```
+```
+CopyDrop:
+  TC, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t; LC; BC)
+  ─────────────────────────────────────────────────────────────
+  TC, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t; LC; BC)
+```
+```
+If:
+  TC; S, LV₀;  S, LV₁  ⊢  o: t
+  TC; S; K  ⊢  k₀: ¬(LV₁; LC; BC)
+  TC; S; K  ⊢  k₁: ¬(LV₁; LC; BC)
+  ──────────────────────────────────────────
+  TC; S; K  ⊢  if(o, k₀, k₁): ¬(LV₀; LC; BC)
+```
+```
+Switch:
+  (∪ₙ tₙ) :> t
+  ∀i
+    TC; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ; LC; BC)
+  ────────────────────────────────────────────────────
+  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t; LC; BC)
+```
+```
+LifetimeBegin:
+  TC; S; K  ⊢  k: ¬(LV; LC, 'l; BC)
+  ────────────────────────────────────────
+  TC; S; K  ⊢  begin('l, k): ¬(LV; LC; BC)
+```
+```
+LifetimeEnd:
+  'l ∉ LV
+  TC; S; K  ⊢  k: ¬(LV; LC; BC)
+  ───────────────────────────────────────────────────────────────
+  TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l; BC, {'l: 'a | 'a ∈ LC })
+```
+
+#### `Fn` Introduction Rules
+```
+Fn:
+  k₀ = entry
+  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'p*, BC)
+  ∀i.
+    TC; # trait impls
+    S;  # statics
+    l*; # locals (just the location names, no types)
+    K,  # user labels, K = { kₙ: ¬tₙ | n }
+      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ; 'p*, BC);
+    ⊢ eᵢ: ¬tᵢ
+  ────────────────────────────────────────────────────────────────────────────────
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }:
+            for<'p*> fn(tₚ*) -> tᵣ where BC
+```
+```
+FnGeneric:
+  TC, tp*, trb*; S  ⊢  f: for<'p*> fn(tₚ*) -> tᵣ where BC
+  ────────────────────────────────────────────────────────────────────
+  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*, 'p*> fn(tₚ*) -> tᵣ where trb*, BC
+```
+
+#### Subtyping
+```
+SubRefl:
+  ──────
+  T <: T
+```
+```
+SubTrans:
+  T₀ <: T₁
+  T₁ <: T₂
+  ──────
+  T₀ <: T₂
+```
+```
+SubContLValue:
+  b <: a
+  ────────────────────────────────────
+  ¬(LV, lv: a; LC; OB) <: ¬(LV, lv: b; LC; OB)
+```
+```
+SubContOblig:
+  ∀lb ∈ OB₁.  OB₀; <>  ⊢ lb
+  ──────────────────────────────
+  ¬(LV; LC; OB₁) <: ¬(LV; LC; OB₀)
+```
