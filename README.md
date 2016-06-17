@@ -75,11 +75,11 @@ LValue, lv ::= 'ret_slot' | Static | Local | Param
 Types, constants, and rvalues are largely "what one would expect".
 Additionally, there is a (size-indexed) uninitialized type and an inscrutable constant inhabiting it, and an absurd type, with no inhabitants:
 ```
-Size,        n  ::= '0b' | '1b' | '2b' | ...
+Size,        N  ::= '0b' | '1b' | '2b' | ...
 TypeBuiltin     ::= 'Uninit'<Size> | ! | ...
-TypeParam,   tp ::= 'TParam0' | 'TParam1' | ...
+TypeParam,   TP ::= 'TParam0' | 'TParam1' | ...
 TypeUserDef     ::= 'User0'   | 'User1'   | ...
-Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
+Type,        T  ::= TypeBuiltin | TypeParam | TypeUserDef
 ```
 The absurd type is so absurd it can be all sizes for all lvalues (thanks @RalfJung!); there is no need to give it a size index.
 
@@ -123,7 +123,7 @@ Node,       e ::= 'Assign'(LValue, Operand, Label)
                |  'Call'(Operand, Label)
                |  'DeadCode'
                |  ... # et cetera
-NodeType,  ¬t ::= ¬(LValueContext)
+NodeType,  ¬T ::= ¬(LValueContext)
 CfgContext, K ::= (Label : NodeType)*
 ```
 
@@ -134,9 +134,9 @@ This pattern allows us to thread some state.
 Constants can become rvalues whenever, and the in-context and out-context are only constrained to be equal.
 ```
 Const:
-  TC  ⊢  c: t
+  TC  ⊢  c: T
   ────────────────────────────
-  TC;  LV;  LV  ⊢  const(c): t
+  TC;  LV;  LV  ⊢  const(c): T
 ```
 
 Consumption is move complex.
@@ -144,36 +144,36 @@ We need to uninitialize the lvalue iff the type is !Copy.
 ```
 MoveConsume:
   ───────────────────────────────────────────────────────────────
-  TC, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
+  TC, T: !Copy;  LV, lv: T;  LV, lv: Uninit<_>  ⊢  consume(lv): T
 ```
 ```
 CopyConsume:
   ──────────────────────────────────────────────────────
-  TC, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
+  TC, T: Copy;  LV, lv: T;  LV, lv: T  ⊢  consume(lv): T
 ```
 
 The actual threading of the state is in the rvalue intruducers.
 Note that the order of the threading does not matter---our state transformations are communicative.
 ```
 Use:
-  TC; LV₀; LV₁  ⊢  o: t
+  TC; LV₀; LV₁  ⊢  o: T
   ──────────────────────────
-  TC; LV₀; LV₁  ⊢  use(o): t
+  TC; LV₀; LV₁  ⊢  use(o): T
 ```
 ```
 UnOp:
-  TC; LV₀; LV₁  ⊢  o: t
-  u: fn(t) -> u         # primops need no context
+  TC; LV₀; LV₁  ⊢  o: T
+  u: fn(T) -> Tᵣ        # primops need no context
   ─────────────────────────────
-  TC; LV₀; LV₁  ⊢  use(u, o): u
+  TC; LV₀; LV₁  ⊢  use(u, o): Tᵣ
 ```
 ```
 BinOp:
-  TC; LV₀; LV₁  ⊢  oₗ: t
-  TC; LV₁; LV₂  ⊢  oᵣ: t
-  b: fn(t, u) -> v       # primops need no context
+  TC; LV₀; LV₁  ⊢  o₀: T₀
+  TC; LV₁; LV₂  ⊢  o₁: T₁
+  b: fn(T₀, T₁) ->        # primops need no context
   ──────────────────────────────────
-  TC; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
+  TC; LV₀; LV₂  ⊢  use(b, o₀, o₁): Tᵣ
 ```
 
 Nodes do not have two lvalue contexts, because viewed as continuations they don't return.
@@ -181,8 +181,8 @@ The out contexts of their operand(s) instead constrain their successor(s).
 Assignment is perhaps the most important operation:
 ```
 Assign:
-  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: t
-  TC; S;  K  ⊢  k: ¬(LV₁, lv: t)
+  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: T
+  TC; S;  K  ⊢  k: ¬(LV₁, lv: T)
   ───────────────────────────────────────────────────────────
   TC; S;  K  ⊢  assign(lv, rv, k): ¬(LV₀, lv: Uninit<_>)
 ```
@@ -194,12 +194,12 @@ Functions do have type parameters, so we must substitute type args for type para
 While it's not too interesting now, it will become more interesting later.
 ```
 Call:
-  t₀ = for<tp*> fn(t₁..tₙ) -> tᵣ where trb*
+  T₀ = for<TP*> fn(T₁..Tₙ) -> Tᵣ where trb*
   ∀i.
-    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]*
-  TC, trb*; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ)
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]*
+  TC, trb*; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ)
   ───────────────────────────────────────────────────────
-  TC, trb*; S;  K  ⊢  call<tₜₐ*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
+  TC, trb*; S;  K  ⊢  call<Tₜₐ*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
 ```
 
 We can define diverging functions simply by never calling 'exit' and creating a cylic in the CFG instead.
@@ -216,16 +216,16 @@ DeadCode:
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
 ```
 CopyDrop:
-  TC, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t)
+  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: T)
   ─────────────────────────────────────────────────────
-  TC, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t)
+  TC, T: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: T)
 ```
 
 And here is `if`.
 I could go on, but hopefully the basic pattern is clear.
 ```
 If:
-  TC; S, LV₀;  S, LV₁  ⊢  o: t
+  TC; S, LV₀;  S, LV₁  ⊢  o: T
   TC; S; K  ⊢  k₀: ¬(LV₁)
   TC; S; K  ⊢  k₁: ¬(LV₁)
   ──────────────────────────────────
@@ -233,20 +233,20 @@ If:
 ```
 
 And finally, the big "let-rec" that ties the "knot" of continuations together into the CFG --- and a function.
-Every node in the CFG is postulated (node `eᵢ`, with type `¬tᵢ`), and bound to a label (`k₀`).
+Every node in the CFG is postulated (node `eᵢ`, with type `¬Tᵢ`), and bound to a label (`k₀`).
 ```
 Fn:
   k₀ = entry
-  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
+  T₀ = ¬((s: Tₛ)*, (a: Tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>)
   ∀i.
     TC; # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
-    K,  # user labels, K = { kₙ: ¬tₙ | n }
-      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ);
-    ⊢ eᵢ: ¬tᵢ
+    K,  # user labels, K = { kₙ: ¬Tₙ | n }
+      exit:  ¬((s: Tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: Tᵣ);
+    ⊢ eᵢ: ¬Tᵢ
   ─────────────────────────────────────────────────────────────────────────────
-  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }: fn(tₚ*) -> tᵣ
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬T = e)* }, .. }: fn(Tₚ*) -> Tᵣ
 ```
 Note the two special labels, 'enter' and 'exit'.
 'enter' is defined like any other node, but must exist and match the function's signature.
@@ -257,9 +257,9 @@ It requires that all locals and args are uninitialized, but the "return slot" is
 For completeness, we can parameterize the MIR with type parameters and trait bounds like this:
 ```
 FnGeneric:
-  TC, tp*, trb*; S  ⊢  f: fn(tₚ*) -> tᵣ
+  TC, TP*, trb*; S  ⊢  f: fn(Tₚ*) -> Tᵣ
   ───────────────────────────────────────────────────────────
-  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*> fn(tₚ*) -> tᵣ where trb*
+  TC; S ⊢ (Λ<TP*, trb*> f): for<TP*> fn(Tₚ*) -> Tᵣ where trb*
 ```
 
 Ok, make sense? I've of course left many parts of the existing MIR unaccounted for: compound lvalues, lifetimes, references, panicking, mutability, aliasing, and more.
@@ -293,13 +293,13 @@ Enum variant subtypes have been proposed for a variety of reasons, but fit perfe
 Enum switch becomes:
 ```
 Switch:
-  (∪ₙ tₙ) :> t
+  (∪ₙ Tₙ) :> T
   ∀i
-    TC; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ)
+    TC; S; K  ⊢  kᵢ: ¬(LV, lv: Tᵢ)
   ────────────────────────────────────────────
-  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t)
+  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: T)
 ```
-[On the first line, that's a union not the letter 'U'.] The union isn't me introducing union types (whew!), but just saying that these tᵢ "cover" t.
+[On the first line, that's a union not the letter 'U'.] The union isn't me introducing union types (whew!), but just saying that these Tᵢ "cover" t.
 The nodes branched from the switch each expect a different variant, and the switch dispatches to the one expecting the variant that's actually there.
 
 
@@ -324,7 +324,7 @@ Lifetime,      'a ::= '\'static' | LifetimeLocal | LifetimeParam
 As a first approximation, continuation types will be extended to include the set of liftimes the node inhabits, hereafter called the "active lifetimes".
 ```
 LifetimeContext, LC ::= Lifetime*
-NodeType,        ¬t ::= ¬(LValueContext; LifetimeContext)
+NodeType,        ¬T ::= ¬(LValueContext; LifetimeContext)
 ```
 As lvalues contexts must be proper maps, so lifetime contexts must be proper sets when invoking any judgment.
 
@@ -398,7 +398,7 @@ If that is not the case, RF 1214's outlives will need to be further modified.
 
 Unfortunately, we must modify continuation types again, giving them---you guessed it---a bound context.
 ```
-NodeType, ¬t ::= ¬(LValueContext; LifetimeContext; BoundContext)
+NodeType, ¬T ::= ¬(LValueContext; LifetimeContext; BoundContext)
 ```
 Again, all existing rules will blindly propagate the bound context to their successors.
 But, this time there is a subtyping rule:
@@ -438,12 +438,12 @@ Third, it needs to propagate obligations to satisfy the lifetime bounds from the
 Call:
   TC ⊢ trb*
   OB ⊢ lb*
-  t₀ = for<tp*, 'p*> fn(t₁..tₙ) -> tᵣ where trb*, lb*
+  T₀ = for<TP*, 'p*> fn(T₁..Tₙ) -> Tᵣ where trb*, lb*
   ∀i.
-    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]* ['a/'p]*
-  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ; LC; OB)
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]* ['a/'p]*
+  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ; LC; OB)
   ────────────────────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  call<tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
 [I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate postulate just for legibility.]
 
@@ -453,25 +453,25 @@ lifetime parameters, and `'static`, become active lifetimes for `enter` and `exi
 ```
 Fn:
   k₀ = entry
-  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'static, 'p*)
+  T₀ = ¬((s: Tₛ)*, (a: Tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'static, 'p*)
   ∀i.
     TC; # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
-    K,  # user labels, K = { kₙ: ¬tₙ | n }
-      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ; 'static, 'p*; BC);
-    ⊢ eᵢ: ¬tᵢ
+    K,  # user labels, K = { kₙ: ¬Tₙ | n }
+      exit:  ¬((s: Tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: Tᵣ; 'static, 'p*; BC);
+    ⊢ eᵢ: ¬Tᵢ
   ─────────────────────────────────────────────────────────────────────────────────────────
-  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }:
-            for<'p*> fn(tₚ*) -> tᵣ where BC
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬T = e)* }, .. }:
+            for<'p*> fn(Tₚ*) -> Tᵣ where BC
 ```
 
 `FnGeneric` is basically the same but prepends type parameters to lifetime parameters and prepends trait bounds to lifetime bounds.
 ```
 FnGeneric:
-  TC, tp*, trb*; S  ⊢  f: for<'p*> fn(tₚ*) -> tᵣ where BC
+  TC, TP*, trb*; S  ⊢  f: for<'p*> fn(Tₚ*) -> Tᵣ where BC
   ────────────────────────────────────────────────────────────────────
-  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*, 'p*> fn(tₚ*) -> tᵣ where trb*, BC
+  TC; S ⊢ (Λ<TP*, trb*> f): for<TP*, 'p*> fn(Tₚ*) -> Tᵣ where trb*, BC
 ```
 
 I should note that the outlives-at relation defined this way has some perhaps surprising consequences.
@@ -577,9 +577,9 @@ LValue, lv ::= 'ret_slot' | Static | Local | Param
 ```
 Size,        n  ::= '0b' | '1b' | '2b' | ...
 TypeBuiltin     ::= 'Uninit'<Size> | ...
-TypeParam,   tp ::= 'TParam0' | 'TParam1' | ...
+TypeParam,   TP ::= 'TParam0' | 'TParam1' | ...
 TypeUserDef     ::= 'User0'   | 'User1'   | ...
-Type,        t  ::= TypeBuiltin | TypeParam | TypeUserDef
+Type,        T  ::= TypeBuiltin | TypeParam | TypeUserDef
 ```
 ```
 LifetimeLocal, 'l ::= '\'local0' | '\'local1' | ...
@@ -619,7 +619,7 @@ Node,            e  ::= 'Assign'(LValue, Operand, Label)
                      |  'If'(Operand, Label, Label)
                      |  ... # et cetera
 LifetimeContext, LC ::= Lifetime*
-NodeType,        ¬t ::= ¬(LValueContext; LifetimeContext; BoundContext)
+NodeType,        ¬T ::= ¬(LValueContext; LifetimeContext; BoundContext)
 CfgContext,      K  ::= (Label : NodeType)*
 ```
 
@@ -628,49 +628,49 @@ CfgContext,      K  ::= (Label : NodeType)*
 #### Operand Introduction Rules
 ```
 Const:
-  TC  ⊢  c: t
+  TC  ⊢  c: T
   ────────────────────────────
-  TC;  LV;  LV  ⊢  const(c): t
+  TC;  LV;  LV  ⊢  const(c): T
 ```
 ```
 MoveConsume:
   ───────────────────────────────────────────────────────────────
-  TC, t: !Copy;  LV, lv: t;  LV, lv: Uninit<_>  ⊢  consume(lv): t
+  TC, T: !Copy;  LV, lv: T;  LV, lv: Uninit<_>  ⊢  consume(lv): T
 ```
 ```
 CopyConsume:
   ──────────────────────────────────────────────────────
-  TC, t: Copy;  LV, lv: t;  LV, lv: t  ⊢  consume(lv): t
+  TC, T: Copy;  LV, lv: T;  LV, lv: T  ⊢  consume(lv): T
 ```
 
 #### RValue Introduction Rules
 ```
 Use:
-  TC; LV₀; LV₁  ⊢  o: t
+  TC; LV₀; LV₁  ⊢  o: T
   ──────────────────────────
-  TC; LV₀; LV₁  ⊢  use(o): t
+  TC; LV₀; LV₁  ⊢  use(o): T
 ```
 ```
 UnOp:
-  TC; LV₀; LV₁  ⊢  o: t
-  u: fn(t) -> u        # primops need no context
+  TC; LV₀; LV₁  ⊢  o: T
+  u: fn(T) -> Tᵣ        # primops need no context
   ─────────────────────────────
-  TC; LV₀; LV₁  ⊢  use(u, o): u
+  TC; LV₀; LV₁  ⊢  use(u, o): Tᵣ
 ```
 ```
 BinOp:
-  TC; LV₀; LV₁  ⊢  oₗ: t
-  TC; LV₁; LV₂  ⊢  oᵣ: t
-  b: fn(t, u) -> v      # primops need no context
+  TC; LV₀; LV₁  ⊢  o₀: T₀
+  TC; LV₁; LV₂  ⊢  o₁: T₁
+  b: fn(T₀, T₁) ->        # primops need no context
   ──────────────────────────────────
-  TC; LV₀; LV₂  ⊢  use(b, oₗ, oᵣ): u
+  TC; LV₀; LV₂  ⊢  use(b, o₀, o₁): Tᵣ
 ```
 
 #### Node/Continuation Introduction Rules
 ```
 Assign:
-  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: t
-  TC; S;  K  ⊢  k: ¬(LV₁, rv: t; LC; BC)
+  TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: T
+  TC; S;  K  ⊢  k: ¬(LV₁, rv: T; LC; BC)
   ─────────────────────────────────────────────────────────────
   TC; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>; LC; BC)
 ```
@@ -678,12 +678,12 @@ Assign:
 Call:
   TC ⊢ trb*
   OB ⊢ lb*
-  t₀ = for<tp*, 'p*> fn(t₁..tₙ) -> tᵣ where trb*, lb*
+  T₀ = for<TP*, 'p*> fn(T₁..Tₙ) -> Tᵣ where trb*, lb*
   ∀i.
-    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : tᵢ [tₜₐ/tp]* ['a/'p]*
-  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: tᵣ; LC; OB)
+    TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]* ['a/'p]*
+  TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ; LC; OB)
   ────────────────────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  call<tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
 ```
 DeadCode:
@@ -692,13 +692,13 @@ DeadCode:
 ```
 ```
 CopyDrop:
-  TC, t: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: t; LC; BC)
+  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: T; LC; BC)
   ─────────────────────────────────────────────────────────────
-  TC, t: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: t; LC; BC)
+  TC, T: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: T; LC; BC)
 ```
 ```
 If:
-  TC; S, LV₀;  S, LV₁  ⊢  o: t
+  TC; S, LV₀;  S, LV₁  ⊢  o: T
   TC; S; K  ⊢  k₀: ¬(LV₁; LC; BC)
   TC; S; K  ⊢  k₁: ¬(LV₁; LC; BC)
   ──────────────────────────────────────────
@@ -706,11 +706,11 @@ If:
 ```
 ```
 Switch:
-  (∪ₙ tₙ) :> t
+  (∪ₙ Tₙ) :> T
   ∀i
-    TC; S; K  ⊢  kᵢ: ¬(LV, lv: tᵢ; LC; BC)
+    TC; S; K  ⊢  kᵢ: ¬(LV, lv: Tᵢ; LC; BC)
   ────────────────────────────────────────────────────
-  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: t; LC; BC)
+  TC; S; K  ⊢  switch(lv, t, k*): ¬(LV, lv: T; LC; BC)
 ```
 ```
 LifetimeBegin:
@@ -730,23 +730,23 @@ LifetimeEnd:
 ```
 Fn:
   k₀ = entry
-  t₀ = ¬((s: tₛ)*, (a: tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'p*, BC)
+  T₀ = ¬((s: Tₛ)*, (a: Tₚ)*, (l: Uninit<_>)*, ret_slot: Uninit<_>; 'p*, BC)
   ∀i.
     TC; # trait impls
     S;  # statics
     l*; # locals (just the location names, no types)
-    K,  # user labels, K = { kₙ: ¬tₙ | n }
-      exit:  ¬((s: tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: tᵣ; 'p*, BC);
-    ⊢ eᵢ: ¬tᵢ
+    K,  # user labels, K = { kₙ: ¬Tₙ | n }
+      exit:  ¬((s: Tₛ)*, (a: Uninit<_>)*, (l: Uninit<_>)*, ret_slot: Tᵣ; 'p*, BC);
+    ⊢ eᵢ: ¬Tᵢ
   ────────────────────────────────────────────────────────────────────────────────
-  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬t = e)* }, .. }:
-            for<'p*> fn(tₚ*) -> tᵣ where BC
+  TC; S  ⊢  Mir { params, locals, labels: { (k: ¬T = e)* }, .. }:
+            for<'p*> fn(Tₚ*) -> Tᵣ where BC
 ```
 ```
 FnGeneric:
-  TC, tp*, trb*; S  ⊢  f: for<'p*> fn(tₚ*) -> tᵣ where BC
+  TC, TP*, trb*; S  ⊢  f: for<'p*> fn(Tₚ*) -> Tᵣ where BC
   ────────────────────────────────────────────────────────────────────
-  TC; S ⊢ (Λ<tp*, trb*> f): for<tp*, 'p*> fn(tₚ*) -> tᵣ where trb*, BC
+  TC; S ⊢ (Λ<TP*, trb*> f): for<TP*, 'p*> fn(Tₚ*) -> Tᵣ where trb*, BC
 ```
 
 #### Subtyping
