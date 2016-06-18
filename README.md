@@ -164,7 +164,7 @@ Use:
 UnOp:
   TC; LV₀; LV₁  ⊢  o: T
   u: fn(T) -> Tᵣ        # primops need no context
-  ─────────────────────────────
+  ──────────────────────────────
   TC; LV₀; LV₁  ⊢  use(u, o): Tᵣ
 ```
 ```
@@ -172,7 +172,7 @@ BinOp:
   TC; LV₀; LV₁  ⊢  o₀: T₀
   TC; LV₁; LV₂  ⊢  o₁: T₁
   b: fn(T₀, T₁) ->        # primops need no context
-  ──────────────────────────────────
+  ───────────────────────────────────
   TC; LV₀; LV₂  ⊢  use(b, o₀, o₁): Tᵣ
 ```
 
@@ -198,8 +198,8 @@ Call:
   ∀i.
     TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]*
   TC, trb*; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ)
-  ───────────────────────────────────────────────────────
-  TC, trb*; S;  K  ⊢  call<Tₜₐ*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>)
+  ────────────────────────────────────────────────────────────────
+  TC, trb*; S;  K  ⊢  call<Tₜₐ*>(lv, o*, k): ¬(LV₀, lv: Uninit<_>)
 ```
 
 We can define diverging functions simply by never calling 'exit' and creating a cylic in the CFG instead.
@@ -209,15 +209,15 @@ Since that is the return type of a diverging function, after we return we will h
 This is also useful for unreachable branch in an enum match (corresponding to an absurd variant).
 ```
 DeadCode:
-  ───────────────────────────────────────────────
-  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: !)
+  ──────────────────────────────────────
+  TC; S;  K  ⊢  dead_code: ¬(LV₀, lv: !)
 ```
 
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
 ```
 CopyDrop:
-  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: T)
-  ─────────────────────────────────────────────────────
+  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>)
+  ────────────────────────────────────────────────
   TC, T: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: T)
 ```
 
@@ -405,7 +405,7 @@ But, this time there is a subtyping rule:
 ```
 SubContOblig:
   ∀lb ∈ OB₁.  OB₀; <>  ⊢ lb
-  ──────────────────────────────
+  ────────────────────────────────
   ¬(LV; LC; OB₁) <: ¬(LV; LC; OB₀)
 ```
 Note the the 0 and 1 subscripts are reversed from what one might expect.
@@ -442,8 +442,8 @@ Call:
   ∀i.
     TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]* ['a/'p]*
   TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ; LC; OB)
-  ────────────────────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+  ───────────────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, o*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
 [I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate postulate just for legibility.]
 
@@ -654,7 +654,7 @@ Use:
 UnOp:
   TC; LV₀; LV₁  ⊢  o: T
   u: fn(T) -> Tᵣ        # primops need no context
-  ─────────────────────────────
+  ──────────────────────────────
   TC; LV₀; LV₁  ⊢  use(u, o): Tᵣ
 ```
 ```
@@ -662,7 +662,7 @@ BinOp:
   TC; LV₀; LV₁  ⊢  o₀: T₀
   TC; LV₁; LV₂  ⊢  o₁: T₁
   b: fn(T₀, T₁) ->        # primops need no context
-  ──────────────────────────────────
+  ───────────────────────────────────
   TC; LV₀; LV₂  ⊢  use(b, o₀, o₁): Tᵣ
 ```
 
@@ -670,9 +670,9 @@ BinOp:
 ```
 Assign:
   TC; S, LV₀, lv: Uninit<_>;  S, LV₁, lv: Uninit<_>  ⊢  rv: T
-  TC; S;  K  ⊢  k: ¬(LV₁, rv: T; LC; BC)
-  ─────────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  assign(lv, o, k): ¬(LV₀, lv: Uninit<_>; LC; BC)
+  TC; S;  K  ⊢  k: ¬(LV₁, lv: T; LC; BC)
+  ──────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  assign(lv, rv, k): ¬(LV₀, lv: Uninit<_>; LC; BC)
 ```
 ```
 Call:
@@ -682,18 +682,18 @@ Call:
   ∀i.
     TC; S, LVᵢ;  S, LVᵢ₊₁  ⊢ oᵢ : Tᵢ [Tₜₐ/TP]* ['a/'p]*
   TC; S;  K  ⊢  k: ¬(LVₙ₊₁, lv: Tᵣ; LC; OB)
-  ────────────────────────────────────────────────────────────────────────
-  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, rv*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
+  ───────────────────────────────────────────────────────────────────────
+  TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, o*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
 ```
 DeadCode:
-  ───────────────────────────────────────────────
-  TC; S;  K  ⊢  assign(lv, rv*, k): ¬(LV₀, lv: !; LC; BC)
+  ──────────────────────────────────────────────
+  TC; S;  K  ⊢  dead_code: ¬(LV₀, lv: !; LC; BC)
 ```
 ```
 CopyDrop:
-  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>, lv: T; LC; BC)
-  ─────────────────────────────────────────────────────────────
+  TC, T: Copy; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>; LC; BC)
+  ────────────────────────────────────────────────────────
   TC, T: Copy; S;  K  ⊢  drop(lv, k): ¬(LV, lv: T; LC; BC)
 ```
 ```
@@ -765,12 +765,12 @@ SubTrans:
 ```
 SubContLValue:
   b <: a
-  ────────────────────────────────────
+  ────────────────────────────────────────────
   ¬(LV, lv: a; LC; OB) <: ¬(LV, lv: b; LC; OB)
 ```
 ```
 SubContOblig:
   ∀lb ∈ OB₁.  OB₀; <>  ⊢ lb
-  ──────────────────────────────
+  ────────────────────────────────
   ¬(LV; LC; OB₁) <: ¬(LV; LC; OB₀)
 ```
