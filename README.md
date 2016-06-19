@@ -121,7 +121,7 @@ Node,       e ::= 'Assign'(LValue, Operand, Label)
                |  'DropCopy'(LValue, Label)
                |  'If'(Operand, Label, Label)
                |  'Call'(Operand, Label)
-               |  'DeadCode'
+               |  'Unreachable'
                |  ... # et cetera
 NodeType,  ¬T ::= ¬(LValueContext)
 CfgContext, K ::= (Label : NodeType)*
@@ -208,9 +208,9 @@ This unreachable node can be used whenever there exists an lvalue with type `!`
 Since that is the return type of a diverging function, after we return we will have an lvalue with that type (the return slot), and thus we can use this as a successor.
 This is also useful for unreachable branch in an enum match (corresponding to an absurd variant).
 ```
-DeadCode:
+Unreachable:
   ──────────────────────────────────────
-  TC; S;  K  ⊢  dead_code: ¬(LV₀, lv: !)
+  TC; S;  K  ⊢  unreachable: ¬(LV₀, lv: !)
 ```
 
 In this formulation, everything is explicit, so we also need to drop copy types (even if such a node is compiled to nothing) to mark them as uninitialized.
@@ -903,9 +903,9 @@ Call:
   TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, o*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
 ```
-DeadCode:
+Unreachable:
   ──────────────────────────────────────────────
-  TC; S;  K  ⊢  dead_code: ¬(LV₀, lv: !; LC; BC)
+  TC; S;  K  ⊢  unreachable: ¬(LV₀, lv: !; LC; BC)
 ```
 ```
 CopyDrop:
