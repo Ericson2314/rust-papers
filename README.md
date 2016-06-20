@@ -187,7 +187,7 @@ Assign:
   TC; S;  K  ⊢  assign(lv, rv, k): ¬(LV, lv: Uninit<_>)
 ```
 Note that the lvalue to be assigned must be uninitialized prior to assignment, and the rvalue must not affect it, so moving from an lvalue to itself is not prohibited.
-[Also note that making `K, k: _ ⊢ ...` the consequent instead of making `... ⊢ k: _` a postulate would work equally well, but this is easier to read.]
+[Also note that making `K, k: _ ⊢ ...` the conclusion instead of making `... ⊢ k: _` a premise would work equally well, but this is easier to read.]
 
 Call resembles `Unop` and `Binop`, since its the moral equivalent for calling user-defined instead of primitive functions.
 Functions do have type parameters, so we must substitute type args for type parameters.
@@ -445,7 +445,7 @@ Call:
   ───────────────────────────────────────────────────────────────────────
   TC; S;  K  ⊢  call<Tₜₐ*, 'a*>(lv, o*, k): ¬(LV₀, lv: Uninit<_>; LC; OB)
 ```
-[I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate postulate just for legibility.]
+[I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate premise just for legibility.]
 
 `Fn`, not `FnGeneric` is responsible for lifetime parameters and lifetime bounds.
 lifetime parameters, and `'static`, become active lifetimes for `enter` and `exit`.
