@@ -309,7 +309,7 @@ Niko's recent blog posts cover this very well, so I will build on them.
 
 The "non-lexical" in "non-lexical lifetime" is valid, but leaves out the important detail that such lifetimes *are* lexical with respect to the MIR.
 Indeed that this is one of the main motivations for the MIR.
-Not only does this make lifetime inference as we currently do simpler, but it also means we can explicitly represent lifetime.
+Not only does this make lifetime inference as we currently do simpler, but it also means we can explicitly represent lifetimes.
 As I mentioned above, in formalisms like this, I believe everything should be explicit, and so lifetimes will be too.
 
 Lifetimes will be abstract function-global labels, just as lvalues have been defined as abstract function-global labels.
@@ -327,10 +327,10 @@ LifetimeContext, LC ::= Lifetime*
 NodeType,        ¬T ::= ¬(LValueContext; LifetimeContext)
 ```
 As lvalues contexts must be proper maps, so lifetime contexts must be proper sets when invoking any judgment.
-
 All node introducers so far will be modified to simply propagate the lifetime context: whatever lifetimes include a node's successors will also include the node itself.
 Similarly, there is no continuation subtyping related to "active liftimes", they must match exactly.
-Now, everything so far alone does renders lifetimes worthless, because all nodes would inhabit the same lifetimes!
+
+Now, everything so far, alone, does render lifetimes worthless, because all nodes would inhabit the same lifetimes!
 To remedy this, we'll have dedicated nodes to begin and end lifetimes: their single successor will have one more or less active lifetime than they do.
 For now, lets define them as:
 ```
@@ -346,27 +346,28 @@ LifetimeEnd:
   ──────────────────────────────────────
   TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l)
 ```
-The additional postulate, that `'l` is not in any (current) type of any location, should ensure that values do not outlive their lifetime.
+The additional premise, that `'l` is not in any (current) type of any location, should ensure that values do not outlive their lifetime.
 It would be nicer to use a "strict-outlives" relation, but we don't have that.
-Because we do not support controvariant lifetimes, this is sufficient.
+This is a bit unduly restrictive if we choose to support contravariant lifetimes, but either way it is sound.
+Finally, recall that `'l` is a meta-variable for local lifetimes. Parameter lifetimes and `'static` cannot be begun or ended.
 
 I should remark on the design principles that led me to this formalism.
 Niko's [third blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/09/non-lexical-lifetimes-adding-the-outlives-relation/) goes over the limitations of single-entry-multiple-exit lifetimes defined with dominators, and the series instead opts to define lifetimes as subsets of CFG nodes which satisfy some conditions.
 He also pointed out that lifetimes could be thought of as "sets of paths" through a graph.
 I like the imagining lifetimes as "sets of paths", and that leads me to believe we should focus on the path's endpoints more than their interiors.
-A set of nodes, however, focuses on active lifetimes and leaves the lifetime boundary implicit, but having explicit start/end nodes does the opposite.
+A set of nodes focuses on active lifetimes and leaves the lifetime boundary implicit, but having explicit start/end nodes does the opposite.
 Also, while one could make variants of nodes that introduce lifetimes so we need not introduce extra "no-op" begin/end nodes, that would lead to either explosion of rules, or more complicated rules.
 
-Niko's [second blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/04/non-lexical-lifetimes-based-on-liveness/) on non-lexical lifetimes proposes that instead of requiring the types of binding to outlive the *scope* of the binding, we should merely require that it outlive the *live-range* of the binding.
+Niko's [second blog post](http://smallcultfollowing.com/babysteps/blog/2016/05/04/non-lexical-lifetimes-based-on-liveness/) on non-lexical lifetimes proposes that instead of requiring the type of a binding to outlive the *scope* of the binding, we should merely require that it outlives the *live-range* of the binding.
 In my formulation, that is a particularly natural strategy.
-Consider that only during the lifetime in which a variable is live will its lvalue be given that type.
+Consider that only during the lifetime in which a variable is live will its lvalue have that (initialized) type.
 Its last use is in fact its destruction, after which the lvalue's type is `Uninit<_>`.
 To me, this signifies that the "moral equivalent" of a scope for this IR is in fact exactly this "live-range" lifetime.
-While it is possible to derive lifetimes in the core language based on the scopes in the surface language, they are fairly meaningless.
+While it is possible to derive lifetimes based on scopes in the surface language, they are fairly meaningless.
 
 Niko's third blog post also goes over the need for an "outlives-at" relation.
 The basic idea is that we often (always?) only care which lifetime ends later, and don't care which began earlier.
-More on that for a bit, but note now that this is justification for introducing references with an already active lifetime.
+More on that for a bit, but for now I'll explain how this can justify introducing references within an already active lifetime.
 Obviously the newly-introduced reference didn't exists from the beginning of the lifetime, but as long as it is destroyed before the lifetime ends, the lifetime *outlives* the reference *at* the moment of introduction.
 Because lifetimes are based on scopes today, we are already allow the bounding lifetime of a reference to extend past the reference's last use, and thus can be confident that a dedicated sort of node just to end lifetimes is sufficiently expressive.
 If allowing the creation of references in already active lifetimes is indeed sound, then a dedicated sort of node to begin lifetimes works too.
@@ -378,7 +379,7 @@ I tried to think to think of a situation where the new "outlives-at" relation wo
 The rules I came up with, keep the "at" implicit however, so our `x: y` syntax will remain the same.
 
 As before, a lifetime can bound another lifetime or a type.
-Lifetime bounds are bundled in an bound context (running out of names, I am).
+Lifetime bounds are bundled in a *bound context* [running out of names, I am].
 ```
 LifetimeBound, lb ::= Lifetime ':' Lifetime
                    |  Type     ':' Lifetime
@@ -386,22 +387,22 @@ BoundContext,  BC ::= LifetimeBound*
 ```
 
 Recall the outlives relation defined in [RFC 1214](https://github.com/rust-lang/rfcs/blob/master/text/1214-projections-lifetimes-and-wf.md).
-It didn't concern the terms/the CFG, but simply the derivation of outlive bounds from other outlive bounds.
-We will use it here (with the slight exception of a different rule for unique references as those will be defined differently).
+It doesn't concern itself with surface language terms or the CFG, but simply the derivation of outlive bounds from other outlive bounds.
+We will use it here (with the slight exception of a different rule for unique references, as those will be defined differently when they are introduced in a later section).
 Where the judgements refer "the environment", we will make that precise by using the bound context.
 Thus, prepend all judgements with `BC; ` in the original rules, like
 ```
 BC; R ⊢ 'foo: 'bar
 ```
-The logic of keeping this largely at is that, working with outlives-at judgements that all share the same "at", one can ignore the position altogether.
-If that is not the case, RF 1214's outlives will need to be further modified.
+The reasoning behind keeping that "at" part implicit is that when working with outlives-at judgements that all share the same "at", I believe one can ignore the position altogether.
+If that is not the case, RF 1214's outlives will indeed need to be further modified.
 
 Unfortunately, we must modify continuation types again, giving them---you guessed it---a bound context.
 ```
 NodeType, ¬T ::= ¬(LValueContext; LifetimeContext; BoundContext)
 ```
 Again, all existing rules will blindly propagate the bound context to their successors.
-But, this time there is a subtyping rule:
+But, this time there is a new subtyping rule:
 ```
 SubContOblig:
   ∀lb ∈ OB₁.  OB₀; <>  ⊢ lb
@@ -415,10 +416,10 @@ So, given what (all) successors are obligated to carry out, one can deduce bound
 
 Why all this?
 Consider that there is no evidence in the "past" or "present" with which to prove the outlives-at relation.
-The best one can do is charge all successor to witness `'b` dying no later than `'a` for `'a: 'b`.
-Consider also that if we had stayed with the original outlives relation, each node would both obligate its predecessors and require a proof from its predecessors.
+The best one can do is charge all successors to witness `'b` dying no later than `'a` for `'a: 'b`.
+Consider also that if we had stayed with the original outlives relation, each node would both obligate its successors and require a proof from its predecessors.
 
-Hopefully it is clear now that we will need to modify `LifetimeEnd`:
+Hopefully it is clear now that we will need to modify `LifetimeEnd` to discharge these obligations:
 ```
 LifetimeEnd:
   'l ∉ LV
@@ -427,11 +428,11 @@ LifetimeEnd:
   TC; S; K  ⊢  end('l, k): ¬(LV; LC, 'l; BC, {'l: 'a | 'a ∈ LC })
 ```
 The set-builder notation says we discharge obligations for each lifetime in `LC`.
-(Of course, due the the subtyping rule, it's fine if the predecessor doesn't care about every lifetime in `LC` being outlived.)
+(Of course, it should be fine if the node's predecessors doesn't care about every lifetime in `LC` being outlived. The subtyping rule takes care of that.)
 
 We can now redefine `Call`, `Fn`, and `FnGeneric`.
-`Call` has three additionally jobs.
-First, it needs to provide lifetime arguments from the set of active lifetimes.
+`Call` has three additional jobs.
+First, it needs to provide lifetime arguments drawn from the set of active lifetimes.
 Second, it needs to substitute those as well for lifetime parameters in the argument types.
 Third, it needs to propagate obligations to satisfy the lifetime bounds from the where clause.
 ```
@@ -448,8 +449,8 @@ Call:
 [I switched from `TC, trb* ⊢ ...` to making `TC ⊢ trb*` a separate premise just for legibility.]
 
 `Fn`, not `FnGeneric` is responsible for lifetime parameters and lifetime bounds.
-lifetime parameters, and `'static`, become active lifetimes for `enter` and `exit`.
-`exit` also satisfies obligations for all lifetime bounds, allowing the obligations to be back-propagated into the rest of the CFG.
+lifetime parameters and `'static` become active lifetimes for `enter` and `exit`.
+`exit` also satisfies obligations for all lifetime bounds, allowing the bounds to be propagated backwards into the rest of the CFG.
 ```
 Fn:
   k₀ = entry
@@ -466,7 +467,7 @@ Fn:
             for<'p*> fn(Tₚ*) -> Tᵣ where BC
 ```
 
-`FnGeneric` is basically the same but prepends type parameters to lifetime parameters and prepends trait bounds to lifetime bounds.
+`FnGeneric` is basically the same but prepends type parameters to lifetime parameters and prepends trait bounds to lifetime bounds:
 ```
 FnGeneric:
   TC, TP*, trb*; S  ⊢  f: for<'p*> fn(Tₚ*) -> Tᵣ where BC
@@ -487,9 +488,9 @@ Cut and unrolled, the loop looks like:
   ═ 'b: 'a
 ```
 the imaginary cut is at the dotted lines, and the brackets labeled `'a` and `'b` denote each lifetime.
-Moving from left to right, after `'b` ends and until 'a ends, `'a` can derive that `'b: 'a`, because `'b` is alive at `'a`'s ending.
-But the other have of the CFG loop, the opposite can be derived!
-This shows that no precaution is taken against a lifetimes re-resurrecting after they were presumed dead.
+Moving from left to right, after `'b` ends and until `'a` ends, `'a` can derive that `'b: 'a`, because `'b` is alive at `'a`'s ending.
+But during the other half of the CFG loop, the opposite can be derived!
+This shows that no precaution is taken against lifetimes resurrecting after they are presumed dead.
 This might seem highly dangerous, but note that when a lifetime dies, nothing associated with it can still exist because no lvalue can include it in its type.
 Thus, no pointer invalidation can occur.
 
@@ -543,15 +544,14 @@ As our CFG it looks like:
                     1 [ end('x)       ]
 ```
 
-We can type this with a single lifetime!
-Start before A3, to include v1.
-V0's ref is given the same lifetime on both branches.
-On the right branch, end and begin again before C3, as the next section will demostrate, this "clears" the borrow on map1.
+As is shown, we can build this with a single lifetime!
+Start before `A3`, to include `v1`.
+Give `V0`'s ref the same lifetime on both branches.
+On the right branch, end and begin again before `C3`; as the next section will demonstrate, this "clears" the borrow on `map1`.
 Finally, begin again before assigning `v0` so that it can be given the lifetime as prescribed above.
-Note that B1 and C8 have different sets of lvalues borrowed before the merge at D0.
-That's fine.
-One imagine borrowing and then immediately throwing away the reference, but the location must stayed borrowed until the lifetime the referenced was associated with ends.
-Thus one can coerce lvalues to their borrowed equivalents.
+Note that `B1` and `C8` have different sets of lvalues borrowed before the merge at `D0`; that's fine.
+One can imagine borrowing and then immediately throwing away the reference, but the location must stay borrowed until the lifetime the referenced was associated with ends.
+Thus it fine to skip the intermediate step, and allow one to coerce lvalues to their borrowed equivalents.
 
 
 ## Unique References (Generalizing `&mut`)
@@ -589,7 +589,7 @@ SubUniqRef:
   'a₀ <: 'a₁
   Tᵢ₀ <: Tᵢ₁
   Tₒ₀ :> Tₒ₁
-  ────────────────────────────────────────
+  ──────────────────────────────────────────
   &mut<'a₀, Tᵢ₀, tₒ₀> <: &mut<'a₁, Tᵢ₁, tₒ₁>
 ```
 The variance on the type parameters is what it is roughly because the first parameter affects the first *read*, and the second parameter affects the last *write*.
@@ -691,11 +691,11 @@ or similarly:
 ──────────────────────────────────────
 LV, lv: &<'a, Tᵢ, Tₒ> ⊢ deref(lv) : Tᵢ
 ```
-This, however, breaks because the node introducers themselves (e.g. assign) "change" the lvalue context (i.e. nodes' successors often expect a different lvalue context than the nodes themsvles).
+This, however, breaks because the node introducers themselves (e.g. assign) "change" the lvalue context (i.e. nodes' successors often expect a different lvalue context than the nodes themselves).
 Those changes need to be propagated back to types of the references being dereferenced.
 Instead we will use this rule:
 ```
-WithDeref
+WithDeref:
   TC, T; S;
     {  k:  ¬(LVᵢ, deref(lv): Tᵢ; LCᵢ; BCᵢ) | i ≥ 1 }
     ⊢  k': ¬(LV₀, deref(lv): T₀; LC₀; BC₀)
@@ -950,7 +950,7 @@ DropUniqRef:
   TC, T; S;  K  ⊢  drop(lv, k): ¬(LV, lv: &mut<'a, T, T>; LC; BC)
 ```
 ```
-WithDeref
+WithDeref:
   TC, T; S;
     {  k:  ¬(LVᵢ, deref(lv): Tᵢ; LCᵢ; BCᵢ) | i ≥ 1 }
     ⊢  k': ¬(LV₀, deref(lv): T₀; LC₀; BC₀)
