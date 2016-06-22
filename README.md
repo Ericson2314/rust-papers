@@ -139,7 +139,7 @@ Const:
   TC;  LV;  LV  ⊢  const(c): T
 ```
 
-Consumption is move complex.
+Consumption is more complex.
 We need to uninitialize the lvalue iff the type is !Copy.
 ```
 MoveConsume:
