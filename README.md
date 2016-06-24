@@ -556,43 +556,44 @@ Thus it fine to skip the intermediate step, and allow one to coerce lvalues to t
 
 ## Unique References (Generalizing `&mut`)
 
-Lvalue typestate might be the great enabler of post of what I propose, but is somewhat useless on its own.
+Lvalue typestate might be the great enabler of what everything else proposed in this document, but is somewhat useless on its own.
 With references as they exist today, all uninitialized lvalues correspond to locals, and the one thing one can do with them---write to them---is already supported.
 As to changing the type of locals, one can simply use more locals and hope an optimization pass will figure out how to reuse stack slots.
 
 But consider how we might generalize unique references.
 In brief, references provide access to locations, so one can convert a reference to an lvalue (deref), or an lvalue to a reference (ref).
 That much will stay the same between the existing MIR and this.
-With unique references in particular, for every reference created, one preexisting lvalue is made unusable, so there is never more than one way to access an lvalue.
-Thus, in some sense, a unique reference is as good as "direct" access to the underlying lvalue.
-It would thus be nice if via a unique reference one could do everything that can be done with a "top-level" lvalue (i.e. one *not* from a deref), namely change the type of its contents.
+With unique references in particular, for every reference created, one preexisting lvalue is made unusable, so there is never more than one way to access "real" location.
+Thus, in some sense, a unique reference is as good as "direct" access to the original lvalue.
+It would thus be nice if one could do everything via a unique reference that can be done with a "top-level" lvalue (i.e. one *not* from a deref).
+With first class initializedness, that "everything" boils down to changing the type of references' contents.
 
-A first approximation of this might keep the existing `&mut T` type, and simply change it along with the backing lvalue on writes and move-outs.
+A first approximation of this might keep the existing `&mut T` type, and simply change a reference's type parameter along with its backing lvalue on writes and move-outs.
 There a two problems with this, however.
 First, when a function takes some unique reference arguments, the backing lvalues aren't in scope, so there's no way to change them.
 The caller would have no idea what the callee is doing with the references.
-Second, because of control flow merges, it may not be known which lvalue a reference points to, and thus which types to update.
+Second, because of control flow merges, it may not be known which lvalue a reference points to, and thus which lvalues' types to update.
 For example, see `D0` in the CFG at the end of the lifetimes section.
 `v0` may point in either `map1` or `map2`, there's no way of knowing!
 
 The solution is to give unique references *two* type parameters.
-I will use the syntax `&mut<'a, Tᵢ, tₒ>` for the time being.
-The first I will call the current type or input type, and represents what's currently in the borrowed location.
-The second I will call the final type or output type, and represents what must be there when the reference is dropped.
-This solves the first problem because functions' types now state in what condition they will leave any borrowed locations in.
-And this solves the second problem because when we mark a location borrowed, we can simultaneously set it to the newly-created reference's final type.
-This ensures that on the branch that the location *wasn't* mutated, it already has the type it would have had it been.
+I will use the syntax `&mut<'a, Tᵢ, tₒ>`.
+The first parameter is the current type or input type, and represents what's currently in the borrowed location.
+The second is the final type or output type, and represents what must be there when the reference is dropped.
+This solves the first problem because functions' types now state the condition they will leave any borrowed locations in.
+This also solves the second problem because when we mark a location borrowed, we can simultaneously set it to the newly-created reference's final type.
+Doing so ensures that on the branch that the location *wasn't* mutated via the reference, it already has the type it would have had it been.
 
 The subtyping rule is as follows:
 ```
 SubUniqRef:
   'a₀ <: 'a₁
   Tᵢ₀ <: Tᵢ₁
-  Tₒ₀ :> Tₒ₁
   ──────────────────────────────────────────
-  &mut<'a₀, Tᵢ₀, tₒ₀> <: &mut<'a₁, Tᵢ₁, tₒ₁>
+  &mut<'a₀, Tᵢ₀, tₒ> <: &mut<'a₁, Tᵢ₁, tₒ>
 ```
-The variance on the type parameters is what it is roughly because the first parameter affects the first *read*, and the second parameter affects the last *write*.
+Unique references are covariant with respect to the first parameter because it affects the first *read*.
+They would be contravariant with respect to the the second parameter because it affects the last *write*, but since we don't support contravariance they are invariant instead.
 
 The well-formedness (from RFC 1214) rule is as follows:
 ```
@@ -602,50 +603,90 @@ WfUniqRef:
   ───────────────────────
   R ⊢ &mut<'a, Tᵢ, Tₒ> WF
 ```
-Note that neither type must outlive the lifetime of the reference!
+Note that neither type argument need outlive the lifetime of the reference!
 This is a fairly subtle point that deserves some remark.
 The lifetime of the unique reference is the lifetime that the *location* is borrowed; the *contents* of that location is fully owned by the reference.
 It could well be that the contents cannot outlive a different lifetime that ends earlier,
 and thus must be destroyed first.
 That's no problem, because as was already stated, the unique reference allows one change the type of the contents just as one can do with a top-level lvalue.
-The final type must outlive the references lifetime *at* the moment when the reference is dropped, but symmetrically perhaps that type may not be inhabited when the reference was created.
+The final type must outlive the references lifetime *at* the moment when the reference is dropped, but symmetrically that type may not be inhabited when the reference was created.
 
-To ensure that the final type does indeed describe the contents location pointed to by the reference, we only allow dropping unique references when the current type matches the final type.
+The outlives (again from RFC 1214) is:
+```
+OutlivesUniqRef:
+  R ⊢ 'a₀: 'a₁
+  R ⊢ Tᵢ:  'a₁
+  R ⊢ Tₒ:  'a₁
+  ──────────────────────────
+  R ⊢ &mut<'a₀, Tᵢ, Tₒ>: 'a₁
+```
+Requiring `Tᵢ: 'a₁` is easy to decide on as it imposes no onerous restriction.
+If the reference is left containing `Tᵢ` after `Tᵢ` is no longer alive, and the lifetime(s) in which `Tᵢ` is alive does not begin again until after the reference must be dropped (if it begins again at all), the reference is incapable of being dropped.
+`Tₒ: 'a₁` while somewhat conservative, follows from making the output type parameter invariant instead of contravariant.
+It also matches the outlive rules for traits objects and function types.
+
+To ensure that the final type does indeed reflect the location pointed to by the reference before it is dropped, we only allow dropping unique references when the current type matches the final type.
 ```
 DropUniqRef:
   TC, T; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>; LC; BC)
   ───────────────────────────────────────────────────────────────
   TC, T; S;  K  ⊢  drop(lv, k): ¬(LV, lv: &mut<'a, T, T>; LC; BC)
 ```
-Notice that `T` is repeated as both type arguments.
+Notice that both type arguments are `T`.
 
-Besides the unique reference types themselves, there are two more constructs that must be introduced: a borrowed type, and projections.
+Besides unique reference types themselves, there are two more constructs that must be introduced: a borrowed type, and projections.
 Uniquely borrowing a location in Rust prevents all interaction with that location except through the reference.
-Currently we prevent access to the borrowed lvalue through more static analysis, just as we prevent access to unitialized lvalues.
-And just as I instead opted for uninitialized type family, so I will opt for a borrowed type family: `BorrowedMut<'a, T>`.
-`BorrowedMut<'a, T>` is a simple newtype around `T`, but is contravariant with respect to `'a`.
+Currently we prevent access to the borrowed lvalue through more static analysis, just as we prevent access to uninitialized lvalues.
+And just as I instead opted for an uninitialized type family, so I will opt for a borrowed type family: `BorrowedMut<'a, T>`.
+`BorrowedMut<'a, T>` is a simple newtype around `T`, "protecting" `T` during `'a`.
+`'a` would be contravariant and so is invariant.
 ```
 SubBorrowedMut:
-  'a₀ :> 'a₁
-  T₀  <: T₁
+  T₀ <: T₁
   ────────────────────────────────────────
-  Borrowed<'a₀, T₀> <: Borrowed<'a₁, T₁>
+  Borrowed<'a, T₀> <: Borrowed<'a, T₁>
 ```
-The reason is simple, while a `&mut<'a, _, _>` must be destroyed before `'a` end, it's associated `Borrow<'a>` must be destroyed after, to guarantee that aliasing is prevented.
+The reason for the would-be contravariance is simple, while a `&mut<'a, _, T>` must be destroyed before `'a` ends, it's associated `BorrowMut<'a, T>` must turn into back `T` after `'a` ends, to guarantee that aliasing is prevented.
 
-Additionally, any unborrowed lvalue is a subtype can be coerced to its borrowed equivalent without taking a reference.
-[If you, dear reader, don't mind, I won't define how coersions work, because I do not intend to propose changing how they work, and this document is getting pretty long as it is.]
+Because it turns back to `T` after, `BorrowMut<'a, T>`'a the well-formedness rule has the addition restriction that `T: 'a`.
+```
+WfBorrowedMut:
+  R ⊢ T WF
+  R ⊢ T: 'a
+  ─────────────────────────
+  R ⊢ BorrowedMut<'a, T> WF
+```
+[Just like with `LifetimeEnd`, it might be nice to use a strict outlives relation here, but we don't have it at our disposal.
+Thankfully not using strict outlives won't create any soundness problems but rather simply delay the catching of errors.]
+
+Outlives for `BorrowedMut` retains a shred of contravariance in that it outlives its parameter (and must do so far reasons explained above).
+Hopefully this doesn't cause any problems.
+```
+OutlivesBorrowedMut:
+  R ⊢ T: 'a₁
+  ─────────────────────────
+  R ⊢ BorrowedMut<'a₀, T>: 'a₁
+```
+
+Additionally, any unborrowed lvalue is a subtype of its borrowed equivalent.
 This is needed for control flow merges as I talked about above; the shared successor needs to conservatively prohibit access to potentially-borrowed locations.
 (In the example but `map1` and `map2` would need to be borrowed at `D0`.)
+```
+SubBorrowUniquely:
+  ──────────────────────────────────────
+  T <: BorrowedMut<'a, T₁>
+```
+Note, I think It should be possible to achieve this with an "lvalue cast" instead of subtyping if that is desired.
 
 The crucial attribute of `BorrowedMut<T>` is any lvalue of it cannot be inspected in any way.
-There has been some talk of non-movable types, so I will presume an `Move` trait whose sole purpose is to gate the use the consume operand.
-While we're at it, might as also make `Uninit<_>: !Move` so the `uninit` constant can be dispensed with.
-If the new trait sounds like mission creep, it is perfectly possible to also just dispense with `Move` trait and special-case prohibit `BorrowedMut` (and `Uninit` too) from being consumed.
+There has been some talk of non-movable types, so I will presume the existence of a `Move` trait whose sole purpose is to gate the use the consume operand.
+While we're at it, one might as also make `Uninit<_>: !Move` so the `uninit` constant can be dispensed with.
+If the new trait sounds like mission creep, it is perfectly possible to also just dispense with the `Move` trait and special-case prohibit `BorrowedMut` (and `Uninit` too) from being consumed.
 
-Now we have enough in place for the the unique reference introducer.
-References are introduced as an lvalue, same grammar as today.
+Now we have enough in place for unique reference introduction.
+References are introduced as an rvalue, with the same grammar as today.
 ```
+BorrowKind ::= 'unique' | 'aliased'
 RValue, rv ::= 'use'(Operand)
             |  'unop'(Unop, Operand, Operand)
             |  'binop'(Binop, Operand, Operand)
@@ -663,11 +704,11 @@ RefUnique:
     ⊢ ref('a, unique, lv): &mut<'a, Tᵢ, Borrowed<'a, Tₒ>>
 ```
 As I said earlier, we change the type of the lvalue to the final type, ahead of a value of that type actually being written to the reference.
-That is manifested here as `lv: BorrowedMut<'a, T₁>` in the output lvalue context.
-One thing I didn't mention, and I didn't initially expect was that the final type would *also* be borrowed.
+That is manifested as `lv: BorrowedMut<'a, T₀>` in the output lvalue context.
+One thing I didn't mention, and I didn't initially expect, is that the final type would *also* be borrowed.
 The reason for this is that when reborrowing an indeterminate number of time (e.g. when descending through a tree), it is impossible to keep all intermediate references around, for that would take an indeterminate number of lvalues.
 As the deref rule will make far clearer, this allows intermediate references to be dropped.
-Note finally that due to the borrowed mut subtyping rule, this doesn't constrain consumers who aren't borrowing in a chain.
+Note finally that because one can borrow an lvalue without taking a reference, this doesn't constrain consumers who don't reborrow the reference.
 
 And the last prerequisite, projections. Projections are rustc's umbrella concept for getting lvalues from lvalues.
 Examples include (primitive) array indexing, fields access, and deref.
@@ -679,8 +720,8 @@ LValue,     lv  ::= 'ret_slot' | Static | Local | Param
 Deref is all we need concern ourselves with for now.
 
 Ok, finally everything is in place to introduce the deref rule.
-This rule is at the heart of what references do, and perhaps take the most expected form.
-Considering that projections extra lvalues from lvalues, one might think the deref rule would look like:
+This rule is at the heart of what references do, and perhaps take the least expected form.
+Considering that projections extract lvalues from lvalues, one might think the deref rule would look like:
 ```
 LV ⊢ lv: &<'a, Tᵢ, Tₒ>
 ──────────────────────
@@ -691,7 +732,7 @@ or similarly:
 ──────────────────────────────────────
 LV, lv: &<'a, Tᵢ, Tₒ> ⊢ deref(lv) : Tᵢ
 ```
-This, however, breaks because the node introducers themselves (e.g. assign) "change" the lvalue context (i.e. nodes' successors often expect a different lvalue context than the nodes themselves).
+This, however, breaks because node introducers themselves (e.g. assign) "change" the lvalue context (i.e. nodes' successors often take a different lvalue context than the nodes themselves).
 Those changes need to be propagated back to types of the references being dereferenced.
 Instead we will use this rule:
 ```
@@ -704,13 +745,13 @@ WithDeref:
     K, {          k:   ¬(LVᵢ, lv: &mut<'a, Tᵢ, Tᵣ>; LCᵢ; BCᵢ) | i ≥ 1 }
     ⊢  with_deref(k)': ¬(LV₀, lv: &mut<'a, T₀, Tᵣ>; LC₀; BC₀)
 ```
-This convoluted allows one to build a node where it and its successors just see the dereferenced lvalue instead of the reference itself.
-Then, provided we can build real successors which see a reference instead, this node can be build with the reference instead.
-The type of the deref becomes the current type, and the type of the final type can be anything but must stay the same.
+This convoluted rule allows one to build a node where it and its successors just see the dereferenced lvalue instead of the reference itself.
+Then, provided we can build real successors which see a reference instead, this node too can be built with the reference instead.
+The type of the deref lvalue becomes the current type, and the type of the final type can be anything but must stay the same.
 Let's put this into context with assign.
 Say we want to move out of a unique reference.
-The assign node "above the line" expects `deref(lv): T`, and its single successor expects `deref(lv): Uninit<_>`.
-Then the "real" `with_deref(assign(..))` node expects `lv: &mut<'a, T, Whatever>`, and its "real" successor expects `lv: &mut<'a, Uninit<_>, Whatever>`.
+The premised assign node expects `deref(lv): T`, and its single successor expects `deref(lv): Uninit<_>`.
+Then the concluded `with_deref(assign(..))` node expects `lv: &mut<'a, T, Whatever>`, and its successor expects `lv: &mut<'a, Uninit<_>, Whatever>`.
 Thus, we've moved out of a reference!
 
 Another crucial example is reborrowing.
@@ -719,15 +760,20 @@ The new references's (initial) current type is the old references (previous) cur
 Pictorially this looks like:
 ```
 ('a: 'b)
-    &mut<'b, T₀,                              BorrowedMut<T₁>>
-&mut<'a,     T₀, BorrowedMut<T₂>>    &mut<'a, BorrowedMut<T₁>, BorrowedMut<<T₂>>
+    ┌───────────────────────────────────────────────────────────╮
+    │&mut<'b, T₀,                               BorrowedMut<T₁>>│
+    ╰──────────┬────────────────────────────────────┬───────────╯
+               ↑                                    ↓
+┌──────────────┴──────────────────╮   ┌─────────────┴─────────────────────────────╮
+│&mut<'a,     T₀, BorrowedMut<T₂>>├ → ┤&mut<'a, BorrowedMut<T₁>, BorrowedMut<<T₂>>│
+╰─────────────────────────────────╯   ╰───────────────────────────────────────────╯
 ```
 On top is the new reference created from the reborrow.
 On bottom is the old reference, before and after the reborrow.
 See now also what I crudely described before when introducing the unique reference dropping rule.
 If `T₁ = T₂`, then the old reference can be dropped before the new reference, allowing an indefinite chain of reborrowing with no more than 2 references alive at a time.
 
-Second, it is good to be aware of the difference in capabilities between the
+Second, it is good to be aware of the increase in capabilities on reborrowed references between the status quo and this proposal.
 If the dereferenced lvalue is borrowed and assigned, the successor's reborrowed reference  (not the newly created reference!) will look like:
 ```
 &mut<'old, BorrowedMut<'new, T>, T>
@@ -739,8 +785,8 @@ BorrowedMut<&mut<'a, T>, T>>
 this is the difference between (on top, my plan) a reference where the *referenced location* is borrowed, and (on bottom, status quo) a borrowed location holding a reference.
 The latter can only be dropped, but the former can be moved around too.
 I don't have a complete plan, but this opens the door to storing a reborrowed reference and the reference that reborrows it together in the same struct.
-This is related to the [first wishlist item](https://github.com/tomaka/vulkano/blob/master/TROUBLES.md) of Tomaka's Vulanco library.
-[I do have a plan for making box and other owning pointers a unique reference newtype.
+This is related to the [first wishlist item](https://github.com/tomaka/vulkano/blob/master/TROUBLES.md) of Tomaka's Vulkano library.
+[I do have a plan for making Box and other owning pointers unique reference newtypes.
 I will present it a few sections later.]
 
 Finally, before I end this section, a few words on how this relates to other proposals.
@@ -750,10 +796,10 @@ Finally, before I end this section, a few words on how this relates to other pro
 &'a move T = &mut<'a, T, Uninit<_>>
 &'a out  T = &mut<'a, Uninit<_>, T>
 ```
-The subtyping rule for `&mut<_, _, _>` likewise imply the subtyping rules for `&mut`, `&move`, and `&out`.
-Because the unique references are covariant with respect to their current types, `&move`'s is covariant with respect to its type argument.
-Likewise because unique references are contravariant with respect to their final type, `&out` is contravariant with respect to its type argument.
-Covariance and Contravariance cancels out, so `&mut` is invariant with respect to its type argument.
+The subtyping rule for `&mut<_, _, _>` likewise imply the subtyping rules for the three.
+Because unique references' current types parameter is covariant, `&move`'s parameter is also covariant.
+Because unique references' final type parameter is invariant (or contravariant), `&out`'s parameter is invariant (or contravariant).
+Invariance overrides the others (or covariance and contravariance cancel out), so `&mut`'s parameter is invariant.
 Additionally, there has been some interest in relaxing the well-formedness restriction on `&mut`.
 While I do not know if this is backwards compatible, this proposal would indicate that it can be done soundly.
 I should finally note that the chief criticism of these proposals is the worry that by introducing more primitive reference types, we'll open the floodgates and end up with an overflowing menagerie of confusing and non-orthogonal primitive pointer types.
@@ -1012,26 +1058,53 @@ SubContOblig:
 SubUniqRef:
   'a₀ <: 'a₁
   Tᵢ₀ <: Tᵢ₁
-  Tₒ₀ :> Tₒ₁
+  Tₒ₀ :> Tₒ₁ # optional contravariance
   ──────────────────────────────────────────
   &mut<'a₀, Tᵢ₀, tₒ₀> <: &mut<'a₁, Tᵢ₁, tₒ₁>
 ```
 ```
 SubBorrowedMut:
-  'a₀ :> 'a₁
+  'a₀ :> 'a₁ # optional contravariance
   T₀  <: T₁
   ──────────────────────────────────────
   Borrowed<'a₀, T₀> <: Borrowed<'a₁, T₁>
 ```
+```
+SubBorrowUniquely:
+  ──────────────────────────────────────
+  T <: BorrowedMut<'a, T>
+```
+
+#### Outlives
+Changes from [RFC 1214](https://github.com/rust-lang/rfcs/blob/master/text/1214-projections-lifetimes-and-wf.md).
+```
+OutlivesUniqRef:
+  R ⊢ 'a₀: 'a₁
+  R ⊢ Tᵢ:  'a₁
+  R ⊢ Tₒ:  'a₁ # only if invariant
+  ──────────────────────────
+  R ⊢ &mut<'a₀, Tᵢ, Tₒ>: 'a₁
+```
+```
+OutlivesBorrowedMut:
+  R ⊢ T: 'a₁
+  ─────────────────────────
+  R ⊢ BorrowedMut<'a₀, T>: 'a₁
+```
 
 #### Well-Formedness
-
 Changes from [RFC 1214](https://github.com/rust-lang/rfcs/blob/master/text/1214-projections-lifetimes-and-wf.md).
-
 ```
 WfUniqRef:
-  R ⊢ Tᵢ WF  # Tᵢ must be WF
-  R ⊢ Tₒ WF  # Tₒ must be WF
+  R ⊢ Tᵢ WF
+  R ⊢ Tₒ WF
   ───────────────────────
   R ⊢ &mut<'a, Tᵢ, Tₒ> WF
+```
+```
+WfBorrowedMut:
+  R ⊢ T WF
+  R ⊢ T: 'a
+  ─────────────────────────
+  R ⊢ BorrowedMut<'a, T> WF
 ```
