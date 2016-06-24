@@ -789,6 +789,8 @@ This is related to the [first wishlist item](https://github.com/tomaka/vulkano/b
 [I do have a plan for making Box and other owning pointers unique reference newtypes.
 I will present it a few sections later.]
 
+### Other proposals and the surface language
+
 Finally, before I end this section, a few words on how this relates to other proposals.
 `&mut`, `&move`, and `&out` are but special case of `&mut<_, _, _>`:
 ```
@@ -798,12 +800,21 @@ Finally, before I end this section, a few words on how this relates to other pro
 ```
 The subtyping rule for `&mut<_, _, _>` likewise imply the subtyping rules for the three.
 Because unique references' current types parameter is covariant, `&move`'s parameter is also covariant.
-Because unique references' final type parameter is invariant (or contravariant), `&out`'s parameter is invariant (or contravariant).
+Because unique references' residule type parameter is invariant (or contravariant), `&out`'s parameter is invariant (or contravariant).
 Invariance overrides the others (or covariance and contravariance cancel out), so `&mut`'s parameter is invariant.
 Additionally, there has been some interest in relaxing the well-formedness restriction on `&mut`.
 While I do not know if this is backwards compatible, this proposal would indicate that it can be done soundly.
 I should finally note that the chief criticism of these proposals is the worry that by introducing more primitive reference types, we'll open the floodgates and end up with an overflowing menagerie of confusing and non-orthogonal primitive pointer types.
 Well, I am very please to report that with this proposal there are and will be no new pointer types, as `&mut T` becomes but a synonym for its generalization.
+
+Thanks to default type parameters, we can backwards-compatibly extend `DerefMut` to support any unique reference:
+```rust
+pub trait DerefMut<ResiduleSelf = Self>: Deref {
+    type ResiduleTarget = Self::Target;
+    fn deref_mut(self: &mut<Self, ResiduleSelf>) -> &mut<Self::Target, ResiduleTarget>;
+}
+```
+This removes the need for any `DerefMove` trait or similar.
 
 
 ## Appendix: Grammar and Rules in Full
