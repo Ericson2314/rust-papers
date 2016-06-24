@@ -579,9 +579,9 @@ For example, see `D0` in the CFG at the end of the lifetimes section.
 The solution is to give unique references *two* type parameters.
 I will use the syntax `&mut<'a, Tᵢ, tₒ>`.
 The first parameter is the current type or input type, and represents what's currently in the borrowed location.
-The second is the final type or output type, and represents what must be there when the reference is dropped.
+The second is the residule type or output type, and represents what must be there when the reference is dropped.
 This solves the first problem because functions' types now state the condition they will leave any borrowed locations in.
-This also solves the second problem because when we mark a location borrowed, we can simultaneously set it to the newly-created reference's final type.
+This also solves the second problem because when we mark a location borrowed, we can simultaneously set it to the newly-created reference's residule type.
 Doing so ensures that on the branch that the location *wasn't* mutated via the reference, it already has the type it would have had it been.
 
 The subtyping rule is as follows:
@@ -609,7 +609,7 @@ The lifetime of the unique reference is the lifetime that the *location* is borr
 It could well be that the contents cannot outlive a different lifetime that ends earlier,
 and thus must be destroyed first.
 That's no problem, because as was already stated, the unique reference allows one change the type of the contents just as one can do with a top-level lvalue.
-The final type must outlive the references lifetime *at* the moment when the reference is dropped, but symmetrically that type may not be inhabited when the reference was created.
+The residule type must outlive the references lifetime *at* the moment when the reference is dropped, but symmetrically that type may not be inhabited when the reference was created.
 
 The outlives (again from RFC 1214) is:
 ```
@@ -625,7 +625,7 @@ If the reference is left containing `Tᵢ` after `Tᵢ` is no longer alive, and 
 `Tₒ: 'a₁` while somewhat conservative, follows from making the output type parameter invariant instead of contravariant.
 It also matches the outlive rules for traits objects and function types.
 
-To ensure that the final type does indeed reflect the location pointed to by the reference before it is dropped, we only allow dropping unique references when the current type matches the final type.
+To ensure that the residule type does indeed reflect the location pointed to by the reference before it is dropped, we only allow dropping unique references when the current type matches the residule type.
 ```
 DropUniqRef:
   TC, T; S;  K  ⊢  k: ¬(LV, lv: Uninit<_>; LC; BC)
@@ -703,9 +703,9 @@ RefUnique:
     LC, 'a
     ⊢ ref('a, unique, lv): &mut<'a, Tᵢ, Borrowed<'a, Tₒ>>
 ```
-As I said earlier, we change the type of the lvalue to the final type, ahead of a value of that type actually being written to the reference.
+As I said earlier, we change the type of the lvalue to the residule type, ahead of a value of that type actually being written to the reference.
 That is manifested as `lv: BorrowedMut<'a, T₀>` in the output lvalue context.
-One thing I didn't mention, and I didn't initially expect, is that the final type would *also* be borrowed.
+One thing I didn't mention, and I didn't initially expect, is that the residule type would *also* be borrowed.
 The reason for this is that when reborrowing an indeterminate number of time (e.g. when descending through a tree), it is impossible to keep all intermediate references around, for that would take an indeterminate number of lvalues.
 As the deref rule will make far clearer, this allows intermediate references to be dropped.
 Note finally that because one can borrow an lvalue without taking a reference, this doesn't constrain consumers who don't reborrow the reference.
@@ -747,7 +747,7 @@ WithDeref:
 ```
 This convoluted rule allows one to build a node where it and its successors just see the dereferenced lvalue instead of the reference itself.
 Then, provided we can build real successors which see a reference instead, this node too can be built with the reference instead.
-The type of the deref lvalue becomes the current type, and the type of the final type can be anything but must stay the same.
+The type of the deref lvalue becomes the current type, and the type of the residule type can be anything but must stay the same.
 Let's put this into context with assign.
 Say we want to move out of a unique reference.
 The premised assign node expects `deref(lv): T`, and its single successor expects `deref(lv): Uninit<_>`.
@@ -755,8 +755,8 @@ Then the concluded `with_deref(assign(..))` node expects `lv: &mut<'a, T, Whatev
 Thus, we've moved out of a reference!
 
 Another crucial example is reborrowing.
-First, its instructive to see how the current and final types of the references are "threaded together".
-The new references's (initial) current type is the old references (previous) current type, and the new reference's final type becomes the old reference's (new) current type.
+First, its instructive to see how the current and residule types of the references are "threaded together".
+The new references's (initial) current type is the old references (previous) current type, and the new reference's residule type becomes the old reference's (new) current type.
 Pictorially this looks like:
 ```
 ('a: 'b)
