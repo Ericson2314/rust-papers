@@ -780,7 +780,7 @@ If the dereferenced lvalue is borrowed and assigned, the successor's reborrowed 
 ```
 whereas today, one would end up with the moral equivalent of
 ```
-BorrowedMut<&mut<'a, T>, T>>
+BorrowedMut<'new, &mut<'old, T, T>>
 ```
 this is the difference between (on top, my plan) a reference where the *referenced location* is borrowed, and (on bottom, status quo) a borrowed location holding a reference.
 The latter can only be dropped, but the former can be moved around too.
